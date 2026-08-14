@@ -211,6 +211,7 @@ test('performer / is a no-UI stub, monitor serves the fader page', async () => {
     assert.match(monitorPage.headers.get('content-type'), /text\/html/)
     const monitorHtml = await monitorPage.text()
     assert.match(monitorHtml, /Multichannel Signal Generator/)
+    assert.match(monitorHtml, /16-ch sine wave test/)
     assert.match(monitorHtml, /16 test-tone toggles/i)
     assert.match(monitorHtml, /\/qr/)
     // The QR row copy points at the monitor page (not the performer stub).
