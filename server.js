@@ -4,7 +4,7 @@
 // A PNDS score project with a single production dependency (qrcode):
 //   - performer HTTP server: serves the health endpoint the App polls
 //   - monitor HTTP server: serves the 16-fader test-tone page plus a QR
-//     code pointing at the performer page
+//     code pointing at the monitor page itself
 //   - minimal OSC UDP encoder: talks to the App-hosted scsynth
 //   - audio engine: owns one scsynth group with 16 mono `toneTest`
 //     instances, one per private output bus (PNDS_AUDIO_OUTPUT_BUS + i)
@@ -204,8 +204,8 @@ const monitorServer = http.createServer((request, response) => {
     return
   }
   if (url.pathname === '/qr') {
-    // QR code for the performer page, shown on the monitor page.
-    qrHandler(`http://${hostLanIp}:${serverConfig.performerPort}/`)(request, response)
+    // QR code for the monitor page, shown on the monitor page.
+    qrHandler(`http://${hostLanIp}:${serverConfig.monitorPort}/`)(request, response)
     return
   }
   serveStatic(request, response, path.join(PROJECT_ROOT, 'public'))

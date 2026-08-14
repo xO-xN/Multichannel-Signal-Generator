@@ -2,7 +2,7 @@
   "name": "multichannel-signal-generator",
   "version": "1.0.0",
   "private": true,
-  "description": "PNDS utility project: 16 independent mono test tones for Internal channel checks.",
+  "description": "PNDS utility project: 16-ch sine wave test for Internal channel checks.",
   "main": "server.js",
   "engines": {
     "node": ">=24 <25"

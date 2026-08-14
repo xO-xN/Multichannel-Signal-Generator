@@ -213,12 +213,14 @@ test('performer / is a no-UI stub, monitor serves the fader page', async () => {
     assert.match(monitorHtml, /Multichannel Signal Generator/)
     assert.match(monitorHtml, /16 test-tone toggles/i)
     assert.match(monitorHtml, /\/qr/)
+    // The QR row copy points at the monitor page (not the performer stub).
+    assert.match(monitorHtml, /Scan to open the monitor page/)
   } finally {
     await server.stop()
   }
 })
 
-test('monitor /qr serves a PNG of the performer page URL', async () => {
+test('monitor /qr serves a PNG of the monitor page URL', async () => {
   const server = await startServer()
   try {
     await waitForHealth(server.base, 'ready')

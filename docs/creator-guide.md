@@ -1,6 +1,6 @@
 # Multichannel Signal Generator — Creator Guide（创作者开始指南）
 
-这是一个 **Internal 纯音频测试工具** 的 PNDS 工程：16 路独立单声道测试音（正弦，`toneTest` SynthDef），每路只写自己的私有总线，用于检查 Internal 多声道路由。仅支持 `internal` 模式（`defaultMode: "internal"`、`supportedModes: ["internal"]`、`outputChannels: 16`）。
+这是一个 **Internal 纯音频测试工具** 的 PNDS 工程：**16-ch sine wave test**（16 路独立单声道正弦测试音，`toneTest` SynthDef），每路只写自己的私有总线，用于检查 Internal 多声道路由。仅支持 `internal` 模式（`defaultMode: "internal"`、`supportedModes: ["internal"]`、`outputChannels: 16`）。
 
 ## 快速开始
 
@@ -39,12 +39,12 @@ npm start    # 启动 performer/monitor 两个 HTTP server + 音频引擎
 
 本工程的作品语义是**16 路独立测试音**，Monitor 页面即为控制台：
 
-- **页面**（`public/index.html`，单页，DOM，无 p5）：标题 "Multichannel Signal Generator"，16 个开关按钮 + 主音量推子（默认 −6 dBFS），底部 QR 行（副标题 "Scan to open the performer page"）。所有音默认静音（Mute）。
+- **页面**（`public/index.html`，单页，DOM，无 p5）：标题 "Multichannel Signal Generator"，16 个开关按钮 + 主音量推子（默认 −6 dBFS），底部 QR 行（指向 monitor 页 :6869，副标题 "Scan to open the monitor page"）。所有音默认静音（Mute）。
 - **开关**：点击按钮 → `POST /api/tone {channel, on}`；server 校验 `channel` 必须是 1..16 的整数，否则 400。
 - **主音量**：拖动推子 → `POST /api/master {value 0..1}`；server 校验 `value` 必须是 0..1 的有限数，否则 400。映射到 −60..0 dBFS（0 = Mute，1 = 0 dBFS unity），默认 −6 dBFS；只推给已开启的音。
 - **音频引擎**（`lib/audio-engine.js`，作品逻辑所在）：组 1000（App 保留范围之下），实例 1001..1016；第 i 路只写私有总线 `PNDS_AUDIO_OUTPUT_BUS + i`；频率 `440 Hz × 2^((n−1)/12)`（通道 1 = 440 Hz 音乐会 A，通道 13 = 880 Hz 高八度）；`gain` 经 `Lag.kr(gain, 0.02)` 平滑（~20 ms），无咔嗒声。
 - **OSC**（`lib/osc.js`）：零依赖极简编码器，osc-min 兼容线上格式（4 字节对齐、数字一律按 float 编码，与 bundled scsynth 3.14.1 对齐），已知字节 fixtures 见 `test/osc.test.js`。
-- **QR**：`/qr` 只挂在 monitor server，返回 `http://<LAN-IP>:6868/` 的 PNG（`lib/qr.js` + `lib/network.js`，`PNDS_HOST_IP` 可覆盖 LAN 地址）；performer 端口对 `/qr` 返回 404。
+- **QR**：`/qr` 只挂在 monitor server，返回 monitor 页 `http://<LAN-IP>:6869/` 的 PNG（`lib/qr.js` + `lib/network.js`，`PNDS_HOST_IP` 可覆盖 LAN 地址）；performer 端口对 `/qr` 返回 404。
 - **优雅关闭**：SIGINT/SIGTERM → 释放组（`/g_freeAll`）、关闭 UDP socket 与两个 HTTP server，退出码 0（集成测试断言端口释放）。
 - **环境变量覆盖**：`PNDS_AUDIO_OUTPUT_BUS`（首个私有总线，默认 0）、`PNDS_AUDIO_OUTPUT_CHANNELS`（默认 16）、`PNDS_OSC_TARGET`（默认 127.0.0.1:57110）、`PNDS_PERFORMER_PORT` / `PNDS_MONITOR_PORT`（默认 manifest 端口）、`PNDS_HOST_IP`。
 
@@ -55,7 +55,7 @@ manifest.json             PNDS 工程契约（App 只认它和 server 入口；a
 server.js                 作品主 server：performer/monitor 两个 HTTP server + 路由与 API 校验 + 生命周期
 lib/                      可复用核心，任何 PNDS 工程通用（template 骨架）
   network.js              LAN IPv4 枚举（resolveHostLanIp，PNDS_HOST_IP）
-  qr.js                   performer 页面 QR 码（node 原生 handler，无 Express）
+  qr.js                   monitor 页面 QR 码（node 原生 handler，无 Express）
   osc.js                  极简 OSC 编码器 + UDP 客户端（零依赖，osc-min 兼容线上格式）
   audio-engine.js         16 路 toneTest 实例（组 1000 / 实例 1001..1016）——作品语义所在
 public/                   浏览器端
