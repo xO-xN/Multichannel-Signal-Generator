@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "multichannel-signal-generator",
   "name": "Multichannel Signal Generator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PNDS utility project: 16-ch sine wave test for checking Internal multichannel routing.",
   "scoreServer": {
     "entry": "server.js",
@@ -12,9 +12,13 @@
   },
   "audio": {
     "defaultMode": "internal",
-    "supportedModes": ["internal"],
+    "supportedModes": [
+      "internal"
+    ],
     "outputChannels": 16,
-    "synthdefs": ["supercollider/synthdefs/multichannel-signal-generator.scsyndef"],
+    "synthdefs": [
+      "supercollider/synthdefs/multichannel-signal-generator.scsyndef"
+    ],
     "scsynth": {
       "sampleRate": 48000,
       "blockSize": 64,

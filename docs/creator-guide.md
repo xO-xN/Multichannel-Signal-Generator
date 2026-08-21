@@ -48,6 +48,16 @@ npm start    # 启动 performer/monitor 两个 HTTP server + 音频引擎
 - **优雅关闭**：SIGINT/SIGTERM → 释放组（`/g_freeAll`）、关闭 UDP socket 与两个 HTTP server，退出码 0（集成测试断言端口释放）。
 - **环境变量覆盖**：`PNDS_AUDIO_OUTPUT_BUS`（首个私有总线，默认 0）、`PNDS_AUDIO_OUTPUT_CHANNELS`（默认 16）、`PNDS_OSC_TARGET`（默认 127.0.0.1:57110）、`PNDS_PERFORMER_PORT` / `PNDS_MONITOR_PORT`（默认 manifest 端口）、`PNDS_HOST_IP`。
 
+## 主题跟随（App 集成）
+
+在 PNDS App（≥ v1.2.3）中运行时，monitor 页通过跨域 `postMessage` 接收 App 推送的主题（score project spec §5.3：`pnds:theme` 消息，含最终颜色值 palette），幂等地写入页面 CSS 变量——App 打开 monitor、切换主题、窗口重获焦点时都会重推，页面始终与 App 一致（Lavender / Sand / Stage / Brutal 全部四套）。实现是 `lib/theme-follow.js`（可复用参考实现，供其他 PNDS 工程拷贝），由 server 经 `GET /__pnds/theme-follow.js` 提供给浏览器（与 `/__pnds/health` 同属 App 契约命名空间，仅 monitor 端口）。页面接入只需一行：
+
+```html
+<script src="/__pnds/theme-follow.js"></script>
+```
+
+零配置即生效（默认 palette → CSS 变量映射）。进阶用法（重命名变量、按 palette 推导额外变量、`onTheme` 回调做整套设计分叉、关闭 CSS 写入只走回调）见 `lib/theme-follow.js` 头部注释——在 script 标签之前设置 `window.PNDS_THEME_OPTIONS`。加载时支持 `?theme=<name>` 查询参数作为首帧初值（App 目前不携带该参数，缺席时用工程自带配色，行为与从前完全一致）。
+
 ## 目录结构
 
 ```
@@ -58,9 +68,10 @@ lib/                      可复用核心，任何 PNDS 工程通用（template 
   qr.js                   monitor 页面 QR 码（node 原生 handler，无 Express）
   osc.js                  极简 OSC 编码器 + UDP 客户端（零依赖，osc-min 兼容线上格式）
   audio-engine.js         16 路 toneTest 实例（组 1000 / 实例 1001..1016）——作品语义所在
+  theme-follow.js         主题跟随（App ≥ v1.2.3）：消费 pnds:theme 消息，写入页面 CSS 变量
 public/                   浏览器端
   index.html              16 路测试音 monitor 页（单页，DOM + 内联样式，无 p5）
-test/                     node --test 回归测试（unit / osc / integration）
+test/                     node --test 回归测试（unit / osc / integration / theme-follow）
 supercollider/
   synthdefs/              编译产物 .scsyndef + 构建源码（toneTest）
 docs/                     本指南与交接文档
@@ -72,6 +83,7 @@ docs/                     本指南与交接文档
 |---|---|
 | 换作品名 / 端口 / 输出通道数 | `manifest.json`（改端口只需改这里） |
 | 改 monitor 页面（16 个开关、主推子、QR 行） | `public/index.html`（单页，DOM + 内联样式） |
+| 改主题跟随 | `lib/theme-follow.js`（palette → CSS 变量映射、onTheme / derive 口子、`?theme=` 初值） |
 | 改频率 / 增益映射 / 主音量默认 / 实例数 | `lib/audio-engine.js`（toneFrequency / faderValueToGain / DEFAULT_MASTER_GAIN / TONE_COUNT） |
 | 改 API 校验（channel 1..16、value 0..1） | `server.js`（handleToneRequest / handleMasterRequest） |
 | 改 OSC 编码 / 参数类型 | `lib/osc.js` |
@@ -103,7 +115,7 @@ PNDS App 以 JSON 中 `status === "ready"` 为显示条件。ready 的前置条�
 
 ## test/ 文件夹
 
-`test/` 是给 AI 编程助手用的回归测试（`npm test`，node --test，共 22 个）。创作者不需要手动运行，也不需要理解它们。当你通过 AI 修改工程时，AI 会用它来验证改动没有破坏已有功能：unit（频率数学、增益映射、tone/master 规则，假 OSC client）、osc（与 osc-min 逐字节对照的已知 fixtures）、integration（假 scsynth UDP harness → server 达到 ready；manifest 契约含 synthdef 产物存在；preflight 要求 qrcode 依赖已装在 node_modules；health payload；performer stub + monitor 页；`/qr` 返回 image/png 含 PNG magic 且 performer 端口 404；tone/master API 校验；SIGTERM 干净退出 0 且端口释放）。
+`test/` 是给 AI 编程助手用的回归测试（`npm test`，node --test，共 35 个）。创作者不需要手动运行，也不需要理解它们。当你通过 AI 修改工程时，AI 会用它来验证改动没有破坏已有功能：unit（频率数学、增益映射、tone/master 规则，假 OSC client）、osc（与 osc-min 逐字节对照的已知 fixtures）、integration（假 scsynth UDP harness → server 达到 ready；manifest 契约含 synthdef 产物存在；preflight 要求 qrcode 依赖已装在 node_modules；health payload；performer stub + monitor 页；`/qr` 返回 image/png 含 PNG magic 且 performer 端口 404；tone/master API 校验；SIGTERM 干净退出 0 且端口释放）；theme-follow（消息 → CSS 变量、幂等、畸形忽略、四主题 ≥4.5:1、`?theme=` 初值、浏览器接线，含 `/__pnds/theme-follow.js` 路由断言）。
 
 ## 发布
 

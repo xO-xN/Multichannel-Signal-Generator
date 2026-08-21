@@ -129,6 +129,20 @@ const MIME_TYPES = {
   '.json': 'application/json',
 }
 
+function serveFile(response, filePath) {
+  fs.readFile(filePath, (error, data) => {
+    if (error) {
+      response.writeHead(404).end('Not found')
+      return
+    }
+    response.writeHead(200, {
+      'content-type': MIME_TYPES[path.extname(filePath)] || 'application/octet-stream',
+      'cache-control': 'no-store',
+    })
+    response.end(data)
+  })
+}
+
 function serveStatic(request, response, rootDir) {
   let pathname
   try {
@@ -143,17 +157,7 @@ function serveStatic(request, response, rootDir) {
     response.writeHead(403).end('Forbidden')
     return
   }
-  fs.readFile(filePath, (error, data) => {
-    if (error) {
-      response.writeHead(404).end('Not found')
-      return
-    }
-    response.writeHead(200, {
-      'content-type': MIME_TYPES[path.extname(filePath)] || 'application/octet-stream',
-      'cache-control': 'no-store',
-    })
-    response.end(data)
-  })
+  serveFile(response, filePath)
 }
 
 function jsonResponse(response, status, payload) {
@@ -206,6 +210,14 @@ const monitorServer = http.createServer((request, response) => {
   if (url.pathname === '/qr') {
     // QR code for the monitor page, shown on the monitor page.
     qrHandler(`http://${hostLanIp}:${serverConfig.monitorPort}/`)(request, response)
+    return
+  }
+  if (url.pathname === '/__pnds/theme-follow.js') {
+    // The one lib/ file the monitor page loads in the browser: the
+    // theme-bridge module (spec §5.3), served under the App-contract
+    // namespace like /__pnds/health. Monitor port only — the performer
+    // port keeps its health-only surface.
+    serveFile(response, path.join(PROJECT_ROOT, 'lib', 'theme-follow.js'))
     return
   }
   serveStatic(request, response, path.join(PROJECT_ROOT, 'public'))

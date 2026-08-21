@@ -221,6 +221,30 @@ test('performer / is a no-UI stub, monitor serves the fader page', async () => {
   }
 })
 
+test('monitor serves the theme-follow module, the performer port does not', async () => {
+  const server = await startServer()
+  try {
+    await waitForHealth(server.base, 'ready')
+
+    // The monitor page loads the theme-bridge module (spec §5.3) from
+    // the App-contract namespace…
+    const monitorPage = await fetch(`${server.monitorBase}/`)
+    const monitorHtml = await monitorPage.text()
+    assert.match(monitorHtml, /\/__pnds\/theme-follow\.js/)
+
+    const themeModule = await fetch(`${server.monitorBase}/__pnds/theme-follow.js`)
+    assert.equal(themeModule.status, 200)
+    assert.match(themeModule.headers.get('content-type'), /text\/javascript/)
+    assert.match(await themeModule.text(), /pnds:theme/)
+
+    // …while the performer port keeps its health-only surface.
+    const performerThemeModule = await fetch(`${server.base}/__pnds/theme-follow.js`)
+    assert.equal(performerThemeModule.status, 404)
+  } finally {
+    await server.stop()
+  }
+})
+
 test('monitor /qr serves a PNG of the monitor page URL', async () => {
   const server = await startServer()
   try {

@@ -17,6 +17,7 @@ A PNDS utility score project: a **16-ch sine wave test** (16 independent mono si
 - **JSON API**: `POST /api/tone {channel, on}` (channel 1..16) and `POST /api/master {value 0..1}` on the monitor port
 - **Monitor QR code**: the fader page shows a QR for the monitor page (`:6869`) so phones can open it
 - **Graceful shutdown**: SIGINT/SIGTERM release the scsynth group, the UDP socket and both HTTP servers
+- **Theme following**: inside PNDS App (≥ v1.2.3) the monitor page follows the App color theme (all four themes) via the `pnds:theme` bridge — `lib/theme-follow.js`, served at `/__pnds/theme-follow.js`
 
 ### Getting Started
 
@@ -61,6 +62,7 @@ MIT — see [LICENSE](LICENSE).
 - **JSON API**：monitor 端口提供 `POST /api/tone {channel, on}`（channel 1..16）与 `POST /api/master {value 0..1}`
 - **Monitor QR 码**：fader 页底部展示 monitor 页（:6869）QR，手机扫码即开
 - **优雅关闭**：SIGINT/SIGTERM 释放 scsynth 组、UDP socket 与两个 HTTP server
+- **主题跟随**：在 PNDS App（≥ v1.2.3）中运行时，monitor 页通过 `pnds:theme` 消息实时跟随 App 主题（全部四套）；实现为 `lib/theme-follow.js`，经 `/__pnds/theme-follow.js` 提供给页面
 
 ### 开始
 
