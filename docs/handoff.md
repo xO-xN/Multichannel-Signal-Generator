@@ -8,7 +8,7 @@
 - **例外（本工程）**：`lib/audio-engine.js` 承载本工程的作品语义（16 路 toneTest 的频率/增益规则、组与实例管理、启动序列）——它是纯逻辑模块（可单测，无 HTTP/socket 依赖），见决策记录。
 - `server.js` 做编排（两个 HTTP server、路由、生命周期），并承载 API 校验（channel 1..16、value 0..1）——本工程没有独立的路由层，校验就在 server.js 的 handler 里。
 - **本工程无 sockets**（无 Socket.IO）、**无 p5**、**无 performer UI**（performer 端口只有 `/__pnds/health` + 无 UI stub 页）；**仅 internal 音频模式**。
-- 浏览器端只有一个单页 `public/index.html`（无独立 shared.js / performer.js / monitor.js / style.css）——例外是 `lib/theme-follow.js`：主题跟随参考实现，UMD 形态（浏览器全局 `PNDS_THEME` 自接线 + Node `module.exports` 供测试），是唯一被浏览器加载的 lib/ 文件，经 monitor 端口的 `GET /__pnds/theme-follow.js` 提供（与 health 同属 App 契约命名空间）。
+- 浏览器端只有一个单页 `public/index.html`（无独立 shared.js / performer.js / monitor.js / style.css）——例外是被浏览器加载的桥模块与文案表：`lib/theme-follow.js` / `lib/locale-follow.js`（主题 / 语言跟随参考实现，UMD 形态：浏览器全局 `PNDS_THEME` / `PNDS_LOCALE` 自接线 + Node `module.exports` 供测试），经 monitor 端口的 `GET /__pnds/theme-follow.js` / `GET /__pnds/locale-follow.js` 提供（与 health 同属 App 契约命名空间）；`public/copy.js`（双语文案表，浏览器全局 `PNDS_COPY`），随 public/ 静态服务。
 
 ## 端口约定
 
@@ -30,11 +30,12 @@
 - **主题跟随走 score project spec §5.3（App issue #44/#46）**：monitor 页消费 App 的 `pnds:theme` postMessage（best-effort、最新值覆盖，App 在 iframe load / 切主题 / 焦点重获时重推），幂等写入 CSS 变量；未知或畸形消息静默忽略。实现是 `lib/theme-follow.js`——参数化参考实现（默认映射 + `options.variables` / `options.derive` / `options.onTheme` / `options.applyVariables`），供 LND / 模板等工程拷贝；server 以 `serveFile` 抽取的方式加了 `GET /__pnds/theme-follow.js` 路由（仅 monitor 端口——performer 端口保持 health-only + stub）。
 - **默认映射：`sidebar-bg`→`--track`、`pill`→`--accent-soft`**（其余 bg/card/text/text-secondary/accent/danger 直同名）：`--track` 承担边框/空圆点/分隔线（面板面角色），`--accent-soft` 承担激活音色填充（recessed 填充角色）；四主题下激活填充上的文字 ≥4.5:1（`test/theme-follow.test.js` 断言）。状态色（绿/黄/灰）不直接映射 App warning——它是"填充色+label 色"组合，而消费页把状态画成文字；`statusVariables()` 按 card 亮度分档推导亮/暗两套（本页未用，供状态 UI 工程经 `options.derive` 取用）。
 - **`?theme=<name>` 为前瞻支持**：App 目前不携带该参数；四套主题初值复制自 App 的 theme-variables.css（消息到达后原样覆盖）。参数缺席或未知时页面用自带默认配色，行为与从前完全一致。
+- **语言跟随走网络参考文档 "Locale Following"（App issue #48 / v1.3.0，本工程 issue #1）**：monitor 页消费 App 的 `pnds:locale` postMessage（`{type, version:1, locale:'en'|'zh-CN'}`，负载为解析后的语言代码，精确比较——App 发送规范 BCP 47），与主题桥同一套推送机制（语言切换、iframe 加载、窗口聚焦、心跳），语义一致：单向、尽力而为、最新值胜、幂等、可静默忽略。实现是 `lib/locale-follow.js`——照 `lib/theme-follow.js` 的复制式参考实现模式（不共享包），`current()` / `subscribe()` 持有状态、重复投递不通知任何人、`<html lang>` 同步；server 加了 `GET /__pnds/locale-follow.js` 路由（仅 monitor 端口）。界面文案双语：`public/copy.js` 的 en / zh-CN 两张同形表，页面 `applyCopy()` 全量重渲染（副标题、主音量标签、Mute、全部 aria-label、QR 行）并订阅切换；**默认语言 en = 本工程的历史界面语言**，英文表逐字保留历史文案（测试锚定），静态 HTML 兜底同样携带英文默认值——无桥流量 / 无 JS 的会话渲染与从前完全一致。`?lang=<code>` 首帧初值，未知代码或缺席用默认语言。分层例外（如同 theme-follow 内嵌 App 侧主题数据）：`lib/locale-follow.js` 的 `DEFAULT_LOCALE` / `SUPPORTED_LOCALES` 是复制式参考实现留给拷贝方的两个工程参数（本工程 = 历史界面语言 en + `public/copy.js` 双语表），不算"作品特定逻辑"——加一种语言时随文案表一并改。
 - **v1.2.0 计划（内置工具）**：用户计划在 PNDS App v1.2.0 中把 LND 与 MSG 变成 App 的内置工具；两者继续保持独立仓库，通过 package workflow 产出可运行 bundle；App 侧的 tools registry / 安装机制属于未来工作。
 
 ## 验证命令
 
 ```sh
-npm run check   # node --check server.js lib/osc.js lib/audio-engine.js lib/qr.js lib/network.js lib/theme-follow.js
-npm test        # node --test（unit / osc / integration / theme-follow，共 35 个）
+npm run check   # node --check server.js lib/osc.js lib/audio-engine.js lib/qr.js lib/network.js lib/theme-follow.js lib/locale-follow.js public/copy.js
+npm test        # node --test（unit / osc / integration / theme-follow / locale-follow，共 52 个）
 ```

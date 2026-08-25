@@ -213,11 +213,17 @@ const monitorServer = http.createServer((request, response) => {
     return
   }
   if (url.pathname === '/__pnds/theme-follow.js') {
-    // The one lib/ file the monitor page loads in the browser: the
-    // theme-bridge module (spec §5.3), served under the App-contract
-    // namespace like /__pnds/health. Monitor port only — the performer
-    // port keeps its health-only surface.
+    // One of the two lib/ files the monitor page loads in the browser:
+    // the theme-bridge module (spec §5.3), served under the
+    // App-contract namespace like /__pnds/health. Monitor port only —
+    // the performer port keeps its health-only surface.
     serveFile(response, path.join(PROJECT_ROOT, 'lib', 'theme-follow.js'))
+    return
+  }
+  if (url.pathname === '/__pnds/locale-follow.js') {
+    // The locale-bridge module (network reference "Locale Following"),
+    // the same copy-style pattern as the theme bridge above.
+    serveFile(response, path.join(PROJECT_ROOT, 'lib', 'locale-follow.js'))
     return
   }
   serveStatic(request, response, path.join(PROJECT_ROOT, 'public'))

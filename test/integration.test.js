@@ -245,6 +245,36 @@ test('monitor serves the theme-follow module, the performer port does not', asyn
   }
 })
 
+test('monitor serves the locale-follow module and copy table, the performer port does not', async () => {
+  const server = await startServer()
+  try {
+    await waitForHealth(server.base, 'ready')
+
+    // The monitor page loads the locale-bridge module (network
+    // reference "Locale Following") plus the bilingual copy table…
+    const monitorPage = await fetch(`${server.monitorBase}/`)
+    const monitorHtml = await monitorPage.text()
+    assert.match(monitorHtml, /\/__pnds\/locale-follow\.js/)
+    assert.match(monitorHtml, /src="\/copy\.js"/)
+
+    const localeModule = await fetch(`${server.monitorBase}/__pnds/locale-follow.js`)
+    assert.equal(localeModule.status, 200)
+    assert.match(localeModule.headers.get('content-type'), /text\/javascript/)
+    assert.match(await localeModule.text(), /pnds:locale/)
+
+    const copyModule = await fetch(`${server.monitorBase}/copy.js`)
+    assert.equal(copyModule.status, 200)
+    assert.match(copyModule.headers.get('content-type'), /text\/javascript/)
+    assert.match(await copyModule.text(), /zh-CN/)
+
+    // …while the performer port keeps its health-only surface.
+    const performerLocaleModule = await fetch(`${server.base}/__pnds/locale-follow.js`)
+    assert.equal(performerLocaleModule.status, 404)
+  } finally {
+    await server.stop()
+  }
+})
+
 test('monitor /qr serves a PNG of the monitor page URL', async () => {
   const server = await startServer()
   try {

@@ -5,7 +5,7 @@
 - **npm only**: use `npm install` / `npm run` — never pnpm or yarn.
 - **Removing files**: always use `rm -f`.
 - **No unsolicited commits**: commit only when the user explicitly asks.
-- **Quality gates**: after significant changes run `npm run check` (syntax) and `npm test` (node --test, 35 tests).
+- **Quality gates**: after significant changes run `npm run check` (syntax) and `npm test` (node --test, 52 tests).
 - **Local docs**: `docs/creator-guide.md` (creator guide) and `docs/handoff.md` (developer handoff notes) describe this project's conventions and decisions — read them before changing behavior.
 
 ## Agent skills

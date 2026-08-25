@@ -126,11 +126,16 @@
       #rack { grid-template-columns: repeat(4, 1fr); }
     }
   </style>
-  <!-- Theme following (score project spec §5.3): zero-config — the
+  <!-- Theme following (score project spec §5.3) and locale following
+       (network reference "Locale Following"): zero-config — the theme
        module writes the App's pnds:theme palette into the CSS
-       variables above. Monitor page only; the performer port serves no
-       page. -->
+       variables above, the locale module holds the App's pnds:locale
+       language, and the page renders its copy through the bilingual
+       tables in copy.js (subscribed to switches below). Monitor page
+       only; the performer port serves no page. -->
   <script src="/__pnds/theme-follow.js"></script>
+  <script src="/__pnds/locale-follow.js"></script>
+  <script src="/copy.js"></script>
 </head>
 <body>
   <header>
@@ -139,7 +144,7 @@
   </header>
 
   <div class="master">
-    <label for="master">Master</label>
+    <label for="master" id="master-label">Master</label>
     <input id="master" type="range" min="0" max="1000" step="1" value="900" aria-label="Master volume" />
     <span class="value" id="master-value">-6.0 dBFS</span>
   </div>
@@ -147,8 +152,8 @@
   <div id="rack" role="group" aria-label="16 test-tone toggles"></div>
 
   <div class="qr-row">
-    <img src="/qr" alt="QR code for the monitor page" />
-    <span class="sub">Scan to open the monitor page</span>
+    <img src="/qr" id="qr-img" alt="QR code for the monitor page" />
+    <span class="sub" id="qr-sub">Scan to open the monitor page</span>
   </div>
 
   <script>
@@ -162,9 +167,14 @@
       return BASE_FREQUENCY * Math.pow(2, index / 12) // index 0-based here
     }
 
+    /** The copy table of the current locale (locale bridge + copy.js). */
+    function currentCopy() {
+      return PNDS_COPY[PNDS_LOCALE.current()]
+    }
+
     /** Master fader position 0..1 -> dBFS label. */
     function valueToDb(value) {
-      if (value === 0) return 'Mute'
+      if (value === 0) return currentCopy().mute
       return (MIN_DB + value * (MAX_DB - MIN_DB)).toFixed(1) + ' dBFS'
     }
 
@@ -196,10 +206,11 @@
 
     function buildTone(channel) {
       const freq = toneFrequency(channel - 1)
+      const copy = currentCopy()
       const tone = document.createElement('button')
       tone.type = 'button'
       tone.className = 'tone'
-      tone.setAttribute('aria-label', 'Channel ' + channel + ' tone')
+      tone.setAttribute('aria-label', copy.channelAriaPrefix + channel + copy.channelAriaSuffix)
       tone.setAttribute('aria-pressed', 'false')
 
       const ch = document.createElement('span')
@@ -224,8 +235,11 @@
     }
 
     const rack = document.getElementById('rack')
+    const tones = []
     for (let i = 1; i <= CHANNELS; i += 1) {
-      rack.appendChild(buildTone(i))
+      const tone = buildTone(i)
+      tones.push({ tone, channel: i })
+      rack.appendChild(tone)
     }
 
     const master = document.getElementById('master')
@@ -236,14 +250,39 @@
       setMaster(value)
     })
 
-    // Reflect the host-declared channel count in the header when it differs
-    // from this page's 16 (e.g. a degraded 16ch -> 2ch bridge).
+    // The host-declared channel count once /api/state reports one that
+    // differs from this page's 16 (e.g. a degraded 16ch -> 2ch bridge).
+    let hostChannels = null
+
+    // Re-render every translatable string through the current locale's
+    // copy table — once here (so ?lang= paints the first frame) and on
+    // every App language switch. Idempotent: same locale, same strings.
+    function applyCopy() {
+      const copy = currentCopy()
+      document.title = copy.title
+      document.getElementById('meta').textContent = hostChannels
+        ? copy.degradedPrefix + hostChannels + copy.degradedSuffix
+        : copy.meta
+      document.getElementById('master-label').textContent = copy.master
+      master.setAttribute('aria-label', copy.masterAria)
+      masterValue.textContent = valueToDb(Number(master.value) / 1000)
+      rack.setAttribute('aria-label', copy.rackAria)
+      for (const { tone, channel } of tones) {
+        tone.setAttribute('aria-label', copy.channelAriaPrefix + channel + copy.channelAriaSuffix)
+      }
+      document.getElementById('qr-img').setAttribute('alt', copy.qrAlt)
+      document.getElementById('qr-sub').textContent = copy.qrSub
+    }
+
+    PNDS_LOCALE.subscribe(applyCopy)
+    applyCopy()
+
     fetch('/api/state')
       .then(response => response.json())
       .then(state => {
         if (state.outputChannels && state.outputChannels !== CHANNELS) {
-          document.getElementById('meta').textContent =
-            '16 tones, host declares ' + state.outputChannels + ' output channels'
+          hostChannels = state.outputChannels
+          applyCopy()
         }
       })
       .catch(() => undefined)
