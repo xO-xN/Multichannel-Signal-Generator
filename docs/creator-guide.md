@@ -48,6 +48,14 @@ npm start    # 启动 performer/monitor 两个 HTTP server + 音频引擎
 - **优雅关闭**：SIGINT/SIGTERM → 释放组（`/g_freeAll`）、关闭 UDP socket 与两个 HTTP server，退出码 0（集成测试断言端口释放）。
 - **环境变量覆盖**：`PNDS_AUDIO_OUTPUT_BUS`（首个私有总线，默认 0）、`PNDS_AUDIO_OUTPUT_CHANNELS`（默认 16）、`PNDS_OSC_TARGET`（默认 127.0.0.1:57110）、`PNDS_PERFORMER_PORT` / `PNDS_MONITOR_PORT`（默认 manifest 端口）、`PNDS_HOST_IP`。
 
+## 仪器面板（v1.2.1）
+
+Monitor 以一整块仪器面板承载操作：桌面为 8 × 2 通道阵列，右侧是带刻度的主音量推子；中等窗口改为 4 × 4，手机窄屏把主音量放到阵列下方并使用水平推子。通道编号为主信息，频率为辅助信息，开启状态同时以色彩、开关标记和中英文文字表达。右上角显示本页已开启的通道数量；它表示开关选择，不是音频输出的实测电平。
+
+手机控制二维码位于页脚的「手机控制 / Phone control」原生折叠入口，展开后扫码；目标仍为 monitor 页面。独立运行使用雾灰与青绿色，App 内使用宿主推送的主题色。Brutal 使用直角、硬投影和即时状态切换；减少动态效果偏好会关闭过渡。主音量保留原生 range 的键盘操作，并通过 `aria-valuetext` 提供 dBFS / 静音读数。
+
+这一改版不改变音频 API、频率、默认静音或音量映射。
+
 ## 主题跟随（App 集成）
 
 在 PNDS App（≥ v1.2.3）中运行时，monitor 页通过跨域 `postMessage` 接收 App 推送的主题（score project spec §5.3：`pnds:theme` 消息，含最终颜色值 palette），幂等地写入页面 CSS 变量——App 打开 monitor、切换主题、窗口重获焦点时都会重推，页面始终与 App 一致（Lavender / Sand / Stage / Brutal 全部四套）。实现是 `lib/theme-follow.js`（可复用参考实现，供其他 PNDS 工程拷贝），由 server 经 `GET /__pnds/theme-follow.js` 提供给浏览器（与 `/__pnds/health` 同属 App 契约命名空间，仅 monitor 端口）。页面接入只需一行：

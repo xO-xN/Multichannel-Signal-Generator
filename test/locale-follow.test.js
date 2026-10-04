@@ -316,8 +316,9 @@ function fakeElement(id) {
 // (self-wiring bridge), copy.js (tables) and the page's inline script,
 // all in one context, over a minimal DOM. /api/state answers with a
 // degraded 2-channel host so the re-render path is exercised too.
-function loadPageScript(search) {
+function loadPageScript(search, outputChannels = 2) {
   const messageListeners = []
+  const requests = []
   const byId = {}
   const element = (id) => (byId[id] = byId[id] || fakeElement(id))
   const documentElement = { lang: 'en' }
@@ -329,7 +330,10 @@ function loadPageScript(search) {
       getElementById: (id) => element(id),
     },
     location: { search },
-    fetch: () => Promise.resolve({ json: () => Promise.resolve({ outputChannels: 2 }) }),
+    fetch: (url, options) => {
+      requests.push({ url, options })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ outputChannels }) })
+    },
     addEventListener: (type, handler) => {
       if (type === 'message') {
         messageListeners.push(handler)
@@ -351,7 +355,7 @@ function loadPageScript(search) {
   assert.ok(inline, 'the page has one inline script block')
   vm.runInContext(inline[1], context)
 
-  return { document: sandbox.document, byId, documentElement, messageListeners }
+  return { document: sandbox.document, byId, documentElement, messageListeners, requests }
 }
 
 // Lets the stubbed /api/state promise chain run out.
@@ -408,6 +412,77 @@ test('page script: ?lang= seeds the first frame before any message', () => {
   assert.equal(page.byId.rack.children[0].attributes['aria-label'], '第 1 声道测试音')
   assert.equal(page.byId['qr-sub'].textContent, '扫码打开监视器页面')
   assert.equal(page.documentElement.lang, 'zh-CN')
+})
+
+test('instrument: starts with all 16 tones off and never sends an audio command on load', async () => {
+  const page = loadPageScript('', 16)
+  await settle()
+
+  assert.equal(page.byId['active-count'].textContent, '00')
+  assert.equal(page.byId['frequency-range'].textContent, '440–1047 Hz')
+  for (const tone of page.byId.rack.children) {
+    assert.equal(tone.attributes['aria-pressed'], 'false')
+    assert.equal(tone.children[3].children[0].textContent, 'OFF')
+  }
+  assert.equal(page.byId.rack.children[0].children[2].textContent, '440.0 Hz')
+  assert.equal(page.byId.rack.children[12].children[2].textContent, '880.0 Hz')
+  assert.equal(page.byId.master.attributes['aria-valuetext'], '-6.0 dBFS')
+  assert.deepEqual(page.requests.map(({ url }) => url), ['/api/state'])
+})
+
+test('instrument: channel toggles update the count, visible state and existing tone API', () => {
+  const page = loadPageScript('', 16)
+  const first = page.byId.rack.children[0]
+  const last = page.byId.rack.children[15]
+  first.listeners.click[0]()
+  last.listeners.click[0]()
+
+  assert.equal(page.byId['active-count'].textContent, '02')
+  assert.equal(first.attributes['aria-pressed'], 'true')
+  assert.equal(first.children[3].children[0].textContent, 'ON')
+  first.listeners.click[0]()
+  assert.equal(page.byId['active-count'].textContent, '01')
+  assert.equal(first.attributes['aria-pressed'], 'false')
+  assert.equal(first.children[3].children[0].textContent, 'OFF')
+
+  const commands = page.requests.filter(({ options }) => options?.method === 'POST')
+  assert.ok(commands.every(({ url }) => url === '/api/tone'))
+  assert.deepEqual(commands.map(({ options }) => JSON.parse(options.body)), [
+    { channel: 1, on: true }, { channel: 16, on: true }, { channel: 1, on: false },
+  ])
+})
+
+test('instrument: a language switch translates states and controls without changing enabled tones', () => {
+  const page = loadPageScript('', 16)
+  const first = page.byId.rack.children[0]
+  first.listeners.click[0]()
+  const requestsBefore = page.requests.length
+
+  page.messageListeners[0]({ data: SPEC_MESSAGE })
+  assert.equal(first.attributes['aria-pressed'], 'true')
+  assert.equal(first.children[3].children[0].textContent, '开启')
+  assert.equal(page.byId.rack.children[1].children[3].children[0].textContent, '关闭')
+  assert.equal(page.byId['active-count'].textContent, '01')
+  assert.equal(page.byId['activity-label'].textContent, '已开启声道')
+  assert.equal(page.byId['tones-label'].textContent, '测试音')
+  assert.equal(page.byId['master-note'].textContent, '控制所有已开启的测试音')
+  assert.equal(page.byId['scale-mute'].textContent, '静音')
+  assert.equal(page.byId['remote-label'].textContent, '手机控制')
+  assert.equal(page.requests.length, requestsBefore)
+})
+
+test('instrument: master endpoints preserve the gain API and expose readable values to assistive technology', () => {
+  const page = loadPageScript('', 16)
+  for (const [position, label] of [['0', 'Mute'], ['1000', '0.0 dBFS'], ['500', '-30.0 dBFS']]) {
+    page.byId.master.value = position
+    page.byId.master.listeners.input[0]()
+    assert.equal(page.byId['master-value'].textContent, label)
+    assert.equal(page.byId.master.attributes['aria-valuetext'], label)
+  }
+  const commands = page.requests.filter(({ url }) => url === '/api/master')
+  assert.deepEqual(commands.map(({ options }) => JSON.parse(options.body)), [
+    { value: 0 }, { value: 1 }, { value: 0.5 },
+  ])
 })
 
 // ---------------------------------------------------------------------------

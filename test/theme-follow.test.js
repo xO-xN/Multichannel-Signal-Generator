@@ -229,11 +229,15 @@ test('?theme= paints a first frame; absence keeps the page\'s own colors', () =>
 // Loads lib/theme-follow.js the way the monitor page does (browser
 // global, no module system) and returns what the page observed: its
 // CSS variables and its message listeners.
-function loadMonitorPage(search, options) {
+function loadMonitorPage(search, options, instrument = false) {
   const root = fakeStyleRoot()
   const listeners = {}
+  const attributes = {}
   const page = {
-    document: { documentElement: { style: root.style } },
+    document: { documentElement: {
+      style: root.style,
+      setAttribute: (name, value) => { attributes[name] = value },
+    } },
     location: { search },
     addEventListener: (type, handler) => {
       (listeners[type] = listeners[type] || []).push(handler)
@@ -244,13 +248,37 @@ function loadMonitorPage(search, options) {
     page.PNDS_THEME_OPTIONS = options
   }
 
+  const context = vm.createContext(page)
+  if (instrument) {
+    const html = fs.readFileSync(path.join(LIB_DIR, '..', 'public', 'index.html'), 'utf8')
+    const config = html.match(/<script data-theme-options>([\s\S]*?)<\/script>/)
+    assert.ok(config, 'instrument options are configured before the theme bridge loads')
+    page.window = page
+    vm.runInContext(config[1], context)
+  }
+
   vm.runInContext(
     fs.readFileSync(path.join(LIB_DIR, 'theme-follow.js'), 'utf8'),
-    vm.createContext(page),
+    context,
   )
 
-  return { properties: root.properties, listeners }
+  return { properties: root.properties, listeners, attributes }
 }
+
+test('instrument themes: first-frame Brutal shape follows later App theme switches with its palette', () => {
+  const page = loadMonitorPage('?theme=brutal', undefined, true)
+  assert.equal(page.attributes['data-utility-theme'], 'brutal')
+  assert.equal(page.properties.get('--accent'), THEME_PALETTES.brutal.accent)
+
+  for (const [theme, palette] of [['stage', THEME_PALETTES.stage], ['pond', THEME_PALETTES.lavender]]) {
+    page.listeners.message[0]({ data: { type: 'pnds:theme', version: 1, theme, palette } })
+    assert.equal(page.attributes['data-utility-theme'], theme)
+    assert.equal(page.properties.get('--accent'), palette.accent)
+    assert.equal(page.properties.get('--bg'), palette.bg)
+  }
+  page.listeners.message[0]({ data: { type: 'other', theme: 'brutal' } })
+  assert.equal(page.attributes['data-utility-theme'], 'pond')
+})
 
 test('monitor page wiring: message → documentElement CSS variables', () => {
   const page = loadMonitorPage('')
