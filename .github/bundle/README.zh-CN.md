@@ -12,3 +12,6 @@
 4. 展开底部的「**手机控制**」并扫码，手机即可打开 monitor 页面，无需手输局域网地址。
 
 monitor 跟随 App 的语言与主题。
+
+
+运行条件：本版采用固定 App 共享库，需 PNDS App v1.6.2 或更新且具备 manifest 声明的确切资源。工程包不重复携带运行库；创作机 standalone 调试仍可 npm ci。详情见维护仓库 docs/shared-libraries.md。

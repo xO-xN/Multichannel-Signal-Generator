@@ -1,6 +1,6 @@
 {
   "name": "multichannel-signal-generator",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "description": "PNDS utility project: 16-ch sine wave test for Internal channel checks.",
   "main": "server.js",
@@ -9,10 +9,10 @@
   },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check lib/osc.js && node --check lib/audio-engine.js && node --check lib/qr.js && node --check lib/network.js && node --check lib/theme-follow.js && node --check lib/locale-follow.js && node --check public/copy.js",
+    "check": "node --check server.js && node --check lib/osc.js && node --check lib/audio-engine.js && node --check lib/qr.js && node --check lib/network.js && node --check lib/theme-follow.js && node --check lib/locale-follow.js && node --check public/copy.js && node --check lib/shared-libraries.js && node --check scripts/shared-env.cjs",
     "test": "node --test"
   },
   "dependencies": {
-    "qrcode": "^1.5.4"
+    "qrcode": "1.5.4"
   }
 }

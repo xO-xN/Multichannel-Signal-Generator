@@ -19,7 +19,7 @@ const PROJECT_ROOT = path.join(__dirname, '..')
 
 test('manifest satisfies the score-project contract', () => {
   const manifest = require('../manifest.json')
-  assert.equal(manifest.schemaVersion, 1)
+  assert.equal(manifest.schemaVersion, 2)
   assert.equal(manifest.id, 'multichannel-signal-generator')
   assert.ok(manifest.scoreServer.entry.endsWith('server.js'))
   assert.equal(manifest.audio.defaultMode, 'internal')

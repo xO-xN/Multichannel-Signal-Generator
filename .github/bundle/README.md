@@ -18,3 +18,6 @@ A PNDS utility for checking multichannel routing: 16 sine-wave test tones toggle
    open the monitor page without typing the LAN address.
 
 The monitor follows the App language and theme.
+
+
+Runtime requirements: PNDS App v1.6.2 or a Host supporting the exact shared libraries in manifest.json. The project bundle carries references and project assets; standalone development can still use npm ci. See docs/shared-libraries.md in the source repository.

@@ -6,13 +6,13 @@
 
 ### 1. 安装依赖
 
-PNDS App **不执行 npm install**，所以发布包必须预装可用的 `node_modules/`（本地仓库仍以 `.gitignore` 排除 `node_modules/`，首次使用执行下面的命令；集成测试的 preflight 也要求 `qrcode` 已装在 `node_modules`）：
+PNDS App v1.6.2 通过工程的确切共享引用提供 qrcode；共享发布包保留源码与音频资源，不携带 `node_modules/`。源码独立开发时使用本地 npm 依赖，首次准备：
 
 ```sh
 npm install
 ```
 
-唯一的生产依赖是 `qrcode`（`^1.5.4`，只用于 monitor 的 `/qr` 端点）。
+唯一的生产依赖是 `qrcode`（确切 `1.5.4`，只用于 monitor 的 `/qr` 端点）；manifest 中同版共享引用与 App 资源必须匹配。
 
 ### 2. 运行
 
@@ -137,8 +137,8 @@ PNDS App 以 JSON 中 `status === "ready"` 为显示条件。ready 的前置条�
 
 ## test/ 文件夹
 
-`test/` 是给 AI 编程助手用的回归测试（`npm test`，node --test，共 52 个）。创作者不需要手动运行，也不需要理解它们。当你通过 AI 修改工程时，AI 会用它来验证改动没有破坏已有功能：unit（频率数学、增益映射、tone/master 规则，假 OSC client）、osc（与 osc-min 逐字节对照的已知 fixtures）、integration（假 scsynth UDP harness → server 达到 ready；manifest 契约含 synthdef 产物存在；preflight 要求 qrcode 依赖已装在 node_modules；health payload；performer stub + monitor 页；`/qr` 返回 image/png 含 PNG magic 且 performer 端口 404；tone/master API 校验；SIGTERM 干净退出 0 且端口释放）；theme-follow（消息 → CSS 变量、幂等、畸形忽略、四主题 ≥4.5:1、`?theme=` 初值、浏览器接线，含 `/__pnds/theme-follow.js` 路由断言）；locale-follow（消息解析与畸形忽略、`?lang=` 初值、幂等重推、浏览器接线与 `<html lang>` 同步、双语表同形且英文表 = 历史文案、页面加载顺序与静态兜底，含 `/__pnds/locale-follow.js` 路由断言）。
+`test/` 是给 AI 编程助手用的回归测试（`npm test`，node --test，共 60 个）。创作者不需要手动运行，也不需要理解它们。当你通过 AI 修改工程时，AI 会用它来验证改动没有破坏已有功能：unit（频率数学、增益映射、tone/master 规则，假 OSC client）、osc（与 osc-min 逐字节对照的已知 fixtures）、integration（假 scsynth UDP harness → server 达到 ready；manifest 契约含 synthdef 产物存在；preflight 校验确切共享 qrcode，独立源码开发可使用本地依赖；health payload；performer stub + monitor 页；`/qr` 返回 image/png 含 PNG magic 且 performer 端口 404；tone/master API 校验；SIGTERM 干净退出 0 且端口释放）；theme-follow（消息 → CSS 变量、幂等、畸形忽略、四主题 ≥4.5:1、`?theme=` 初值、浏览器接线，含 `/__pnds/theme-follow.js` 路由断言）；locale-follow（消息解析与畸形忽略、`?lang=` 初值、幂等重推、浏览器接线与 `<html lang>` 同步、双语表同形且英文表 = 历史文案、页面加载顺序与静态兜底，含 `/__pnds/locale-follow.js` 路由断言）。
 
 ## 发布
 
-带生产依赖的发布包由 `.github/workflows/package.yml` 构建（ALLOWLIST 裁剪；`node_modules` 预装；`supercollider/` 显式纳入——`.scsyndef` 是运行时依赖）。详见 `docs/handoff.md`。
+共享发布包由 `.github/workflows/package.yml` 构建（ALLOWLIST 裁剪；确切共享引用，不复制 `node_modules`；`supercollider/` 显式纳入——`.scsyndef` 是运行时依赖）。详见 `docs/handoff.md`。
