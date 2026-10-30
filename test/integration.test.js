@@ -43,7 +43,7 @@ test('manifest passes the App preflight with its production dependency installed
   const dependencies = packageJson.dependencies || {}
   const optionalDependencies = packageJson.optionalDependencies || {}
   // The only production dependency is qrcode (QR endpoint on the monitor).
-  assert.deepEqual(Object.keys(dependencies), ['qrcode'])
+  assert.deepEqual(Object.keys(dependencies), [])
   assert.equal(Object.keys(optionalDependencies).length, 0)
   // Preflight rule (spec §2): production deps present -> node_modules must
   // ship with the project so the App never runs an install step.
@@ -204,7 +204,7 @@ test('performer / is a no-UI stub, monitor serves the fader page', async () => {
     const performerPage = await fetch(`${server.base}/`)
     assert.equal(performerPage.status, 200)
     const performerHtml = await performerPage.text()
-    assert.match(performerHtml, /no performer UI/i)
+    assert.match(performerHtml, /control-client\.js/)
 
     const monitorPage = await fetch(`${server.monitorBase}/`)
     assert.equal(monitorPage.status, 200)
@@ -213,15 +213,15 @@ test('performer / is a no-UI stub, monitor serves the fader page', async () => {
     assert.match(monitorHtml, /Multichannel Signal Generator/)
     assert.match(monitorHtml, /16-ch sine wave test/)
     assert.match(monitorHtml, /16 test-tone toggles/i)
-    assert.match(monitorHtml, /\/qr/)
+
     // The QR row copy points at the monitor page (not the performer stub).
-    assert.match(monitorHtml, /Scan to open the monitor page/)
+    assert.match(monitorHtml, /control-client\.js/)
   } finally {
     await server.stop()
   }
 })
 
-test('monitor serves the theme-follow module, the performer port does not', async () => {
+test('both control pages serve the same theme-follow module', async () => {
   const server = await startServer()
   try {
     await waitForHealth(server.base, 'ready')
@@ -239,13 +239,13 @@ test('monitor serves the theme-follow module, the performer port does not', asyn
 
     // …while the performer port keeps its health-only surface.
     const performerThemeModule = await fetch(`${server.base}/__pnds/theme-follow.js`)
-    assert.equal(performerThemeModule.status, 404)
+    assert.equal(performerThemeModule.status, 200)
   } finally {
     await server.stop()
   }
 })
 
-test('monitor serves the locale-follow module and copy table, the performer port does not', async () => {
+test('both control pages serve the locale-follow module and copy table', async () => {
   const server = await startServer()
   try {
     await waitForHealth(server.base, 'ready')
@@ -269,23 +269,22 @@ test('monitor serves the locale-follow module and copy table, the performer port
 
     // …while the performer port keeps its health-only surface.
     const performerLocaleModule = await fetch(`${server.base}/__pnds/locale-follow.js`)
-    assert.equal(performerLocaleModule.status, 404)
+    assert.equal(performerLocaleModule.status, 200)
   } finally {
     await server.stop()
   }
 })
 
-test('monitor /qr serves a PNG of the monitor page URL', async () => {
+test('project QR routes are retired on both ports', async () => {
   const server = await startServer()
   try {
     await waitForHealth(server.base, 'ready')
 
     const qr = await fetch(`${server.monitorBase}/qr`)
-    assert.equal(qr.status, 200)
-    assert.match(qr.headers.get('content-type'), /image\/png/)
-    const bytes = Buffer.from(await qr.arrayBuffer())
+    assert.equal(qr.status, 404)
+
     // PNG magic: 89 50 4E 47
-    assert.deepEqual([...bytes.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47])
+
 
     // The QR endpoint is monitor-only; the performer port does not expose it.
     const performerQr = await fetch(`${server.base}/qr`)
@@ -321,7 +320,8 @@ test('tone API rejects out-of-range input and accepts valid input', async () => 
       body: JSON.stringify({ channel: 4, on: true }),
     })
     assert.equal(okOn.status, 200)
-    assert.deepEqual(okOn.body, { ok: true })
+    assert.equal(okOn.body.ok, true)
+    assert.equal(okOn.body.state.tones[3].on, true)
 
     const okOff = await fetchJson(`${server.monitorBase}/api/tone`, {
       method: 'POST',
@@ -329,7 +329,8 @@ test('tone API rejects out-of-range input and accepts valid input', async () => 
       body: JSON.stringify({ channel: 4, on: false }),
     })
     assert.equal(okOff.status, 200)
-    assert.deepEqual(okOff.body, { ok: true })
+    assert.equal(okOff.body.ok, true)
+    assert.equal(okOff.body.state.tones[3].on, false)
   } finally {
     await server.stop()
   }
@@ -354,7 +355,8 @@ test('master API rejects out-of-range and accepts valid input', async () => {
       body: JSON.stringify({ value: 0.5 }),
     })
     assert.equal(ok.status, 200)
-    assert.deepEqual(ok.body, { ok: true })
+    assert.equal(ok.body.ok, true)
+    assert.equal(ok.body.state.masterValue, 0.5)
   } finally {
     await server.stop()
   }
@@ -380,4 +382,32 @@ test('SIGTERM shuts down both HTTP servers and exits cleanly', async () => {
   } finally {
     await server.stop()
   }
+})
+
+test('phone and monitor control one server state and preserve it on a fresh page read', async () => {
+  const server = await startServer()
+  try {
+    await waitForHealth(server.base, 'ready')
+    const initial = await fetchJson(`${server.base}/api/state`)
+    const tone = await fetchJson(`${server.base}/api/tone`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channel: 16, on: true }),
+    })
+    assert.equal(tone.body.state.tones[15].on, true)
+    const local = await fetchJson(`${server.monitorBase}/api/state`)
+    assert.deepEqual(local.body, tone.body.state)
+    const master = await fetchJson(`${server.monitorBase}/api/master`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ value: 0.7 }),
+    })
+    const phone = await fetchJson(`${server.base}/api/state`)
+    assert.deepEqual(phone.body, master.body.state)
+    assert.equal(phone.body.masterValue, 0.7)
+    assert.equal(phone.body.tones.length, 16)
+    assert.equal(phone.body.runId, initial.body.runId)
+    assert.equal(phone.body.revision, initial.body.revision + 2)
+    assert.equal(phone.body.tones.filter(tone => tone.on).length, 1)
+    assert.match(await (await fetch(`${server.base}/control-client.js`)).text(), /server-authoritative/)
+    assert.equal((await fetch(`${server.base}/qr`)).status, 404)
+  } finally { await server.stop() }
 })

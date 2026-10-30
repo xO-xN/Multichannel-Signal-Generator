@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // PNDS Multichannel Signal Generator — 16-channel Internal signal utility.
 //
-// A PNDS score project with a single production dependency (qrcode):
-//   - performer HTTP server: serves the health endpoint the App polls
-//   - monitor HTTP server: serves the 16-fader test-tone page plus a QR
-//     code pointing at the monitor page itself
+// A PNDS score project with no production npm dependencies:
+//   - performer and monitor HTTP servers share a responsive control page,
+//     authoritative state API, health endpoint and one audio engine
 //   - minimal OSC UDP encoder: talks to the App-hosted scsynth
 //   - audio engine: owns one scsynth group with 16 mono `toneTest`
 //     instances, one per private output bus (PNDS_AUDIO_OUTPUT_BUS + i)
@@ -22,7 +21,6 @@ const fs = require('node:fs')
 
 const { OscClient } = require('./lib/osc')
 const { createAudioEngine } = require('./lib/audio-engine')
-const { qrHandler } = require('./lib/qr')
 const { resolveHostLanIp } = require('./lib/network')
 
 const PROJECT_ROOT = __dirname
@@ -55,7 +53,7 @@ const serverConfig = {
   monitorPort: resolveEnvInteger('PNDS_MONITOR_PORT', manifest.scoreServer.monitorPort),
 }
 
-// LAN address used for the QR code target and the startup log lines.
+// LAN address used for the startup log lines.
 const hostLanIp = resolveHostLanIp(process.env.PNDS_HOST_IP)
 
 function parseOscTarget(target) {
@@ -165,31 +163,7 @@ function jsonResponse(response, status, payload) {
   response.end(JSON.stringify(payload))
 }
 
-// ---------------------------------------------------------------------------
-// HTTP servers
-// ---------------------------------------------------------------------------
-
-const performerServer = http.createServer((request, response) => {
-  const url = new URL(request.url, 'http://localhost')
-  if (url.pathname === '/__pnds/health') {
-    jsonResponse(response, 200, getHealthPayload())
-    return
-  }
-  if (url.pathname === '/') {
-    // Performer port has no UI: this utility's controls live on the
-    // monitor port (§ monitor page). Keep the server up for health.
-    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    response.end(
-      '<!doctype html><meta charset="utf-8"><title>Multichannel Signal Generator</title>' +
-        '<p>This utility has no performer UI. Open the monitor page for the ' +
-        '16 test-tone faders.</p>'
-    )
-    return
-  }
-  response.writeHead(404).end('Not found')
-})
-
-const monitorServer = http.createServer((request, response) => {
+function handleControlPage(request, response) {
   const url = new URL(request.url, 'http://localhost')
   if (url.pathname === '/__pnds/health') {
     jsonResponse(response, 200, getHealthPayload())
@@ -207,11 +181,6 @@ const monitorServer = http.createServer((request, response) => {
     handleMasterRequest(request, response)
     return
   }
-  if (url.pathname === '/qr') {
-    // QR code for the monitor page, shown on the monitor page.
-    qrHandler(`http://${hostLanIp}:${serverConfig.monitorPort}/`)(request, response)
-    return
-  }
   if (url.pathname === '/__pnds/theme-follow.js') {
     // One of the two lib/ files the monitor page loads in the browser:
     // the theme-bridge module (spec §5.3), served under the
@@ -227,19 +196,27 @@ const monitorServer = http.createServer((request, response) => {
     return
   }
   serveStatic(request, response, path.join(PROJECT_ROOT, 'public'))
-})
+}
+
+const performerServer = http.createServer(handleControlPage)
+const monitorServer = http.createServer(handleControlPage)
 
 // ---------------------------------------------------------------------------
 // Tone / master API (monitor page -> audio engine)
 // ---------------------------------------------------------------------------
 
 let engineRef = null
+const controlRun = require('node:crypto').randomUUID()
+let controlRevision = 0
 
 function audioEngineState() {
   return {
     mode: audioMode,
     outputChannels,
     outputBus,
+    runId: controlRun,
+    revision: controlRevision,
+    masterValue: engineRef ? engineRef.masterValue : 0.9,
     tones: engineRef ? engineRef.toneState() : [],
   }
 }
@@ -280,9 +257,10 @@ function handleToneRequest(request, response) {
       return
     }
     if (engineRef) {
+      controlRevision++
       await engineRef.setTone(channel, on)
     }
-    jsonResponse(response, 200, { ok: true })
+    jsonResponse(response, 200, { ok: true, state: audioEngineState() })
   })().catch(error => {
     jsonResponse(response, 400, { error: error.message })
   })
@@ -298,9 +276,10 @@ function handleMasterRequest(request, response) {
       return
     }
     if (engineRef) {
+      controlRevision++
       await engineRef.setMasterGain(value)
     }
-    jsonResponse(response, 200, { ok: true })
+    jsonResponse(response, 200, { ok: true, state: audioEngineState() })
   })().catch(error => {
     jsonResponse(response, 400, { error: error.message })
   })

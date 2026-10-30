@@ -20,7 +20,7 @@
 - manifest 的 `audio` 块声明 `defaultMode: "internal"`、`supportedModes: ["internal"]`、`outputChannels: 16`、`scsynth`（blockSize 64 / audioBusChannels 128）与 `synthdefs`（编译产物路径，必须存在）。`sampleRate` 已从 schema 的活跃表面移除（运行契约 §7.2）——manifest 里残留的值读取后忽略，启动采样率由 App 全局采样率偏好决定（未设置时 48000）。
 - health ready 的前置条件：两个 HTTP server 都监听成功 **且** 音频引擎确认 16 个实例存在（运行契约 §8：所有 master/instance 确认后才 ready）。没有 scsynth 时 health 停在 starting/error，但 endpoint 照常响应。
 - 退出时释放全部资源：`/g_freeAll` 组、OSC UDP socket、两个 HTTP server——见 `server.js` 的 `shutdown()`（SIGINT/SIGTERM，退出码 0）。
-- 唯一生产依赖为确切 `qrcode 1.5.4`（仅 monitor `/qr` 使用），通过 manifest 共享引用解析；发布包不复制 `node_modules`，源码独立开发保留本地 npm 依赖。接线与失败边界见 [shared-libraries.md](shared-libraries.md)。
+- 当前版本无生产 npm 依赖；两个端口提供同一控制台和权威状态 API，二维码移交 App。
 
 ## 决策记录
 
@@ -40,6 +40,10 @@
 ## 验证命令
 
 ```sh
-npm run check   # node --check server.js lib/osc.js lib/audio-engine.js lib/qr.js lib/network.js lib/theme-follow.js lib/locale-follow.js public/copy.js
+npm run check   # node --check server.js lib/osc.js lib/audio-engine.js lib/network.js lib/theme-follow.js lib/locale-follow.js public/copy.js
 npm test        # node --test（unit / osc / integration / theme-follow / locale-follow，共 60 个）
 ```
+
+## 2026-10-30 双入口控制台
+
+移除工程 QR 和 qrcode 引用；performer 与 monitor 复用一个页面与音频引擎。`public/control-client.js` 负责权威状态轮询、串行写入、总推子合并、超时与迟到响应保护。新增控制客户端和跨端口集成测试。上方带日期记录保留为历史，不代表当前入口。

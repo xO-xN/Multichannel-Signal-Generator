@@ -5,7 +5,7 @@
 - **npm only**: use `npm install` / `npm run` — never pnpm or yarn.
 - **Removing files**: always use `rm -f`.
 - **No unsolicited commits**: commit only when the user explicitly asks.
-- **Quality gates**: after significant changes run `npm run check` (syntax) and `npm test` (node --test, 52 tests).
+- **Quality gates**: after significant changes run `npm run check` (syntax) and `npm test` (node --test).
 - **Local docs**: `docs/creator-guide.md` (creator guide) and `docs/handoff.md` (developer handoff notes) describe this project's conventions and decisions — read them before changing behavior.
 
 ## Agent skills
@@ -26,5 +26,5 @@ Single-context layout: `CONTEXT.md` + `docs/adr/` at the repo root (created lazi
 
 - **Internal audio only**: `defaultMode: "internal"`, `supportedModes: ["internal"]`, 16 output channels; the App-hosted scsynth runs at the App's global sample-rate preference (48000 when unset) with the manifest's blockSize 64 / audioBusChannels 128, and loads `supercollider/synthdefs/multichannel-signal-generator.scsyndef`.
 - **Private buses**: the project owns group 1000 with 16 mono `toneTest` instances (nodes 1001..1016); tone *i* writes only bus `PNDS_AUDIO_OUTPUT_BUS + i` and never downmixes.
-- **Fader API**: the monitor page drives the engine via `POST /api/tone {channel, on}` (channel 1..16) and `POST /api/master {value 0..1}`; rules live in `lib/audio-engine.js`, validation in `server.js`.
-- **QR endpoint**: `/qr` on the monitor port renders the monitor URL (`http://<LAN-IP>:6869/`) as PNG via `lib/qr.js` + `lib/network.js`; the performer port 404s it.
+- **Fader API**: both performer and monitor pages drive the engine via `POST /api/tone {channel, on}` (channel 1..16) and `POST /api/master {value 0..1}`; rules live in `lib/audio-engine.js`, validation in `server.js`.
+- **Shared control console**: both ports serve the same responsive UI, API and audio engine. `GET /api/state` and POST replies carry `runId`/`revision`, tones and `masterValue`. The browser serializes mutations, polls authoritative state, and rejects stale replies. QR belongs to PNDS App and opens performer.

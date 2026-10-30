@@ -35,10 +35,9 @@ function failedLaunch(dir, libraries) {
   });
 }
 
-test("launch reports the exact missing Host library instead of using a local fallback", async t => {
-  const result = await failedLaunch(copyRuntime(t), {});
-  assert.notEqual(result.code, 0);
-  assert.match(result.output, /qrcode@1\.5\.4.*missing/i);
+test("the control tool declares no QR or other runtime npm dependencies", () => {
+  assert.deepEqual(require("../manifest.json").sharedLibraries, []);
+  assert.deepEqual(require("../package.json").dependencies, {});
 });
 
 function libraryMap() {
@@ -92,7 +91,7 @@ async function runningProject(t, libraries) {
   throw new Error(`shared project failed to become ready: ${output}`);
 }
 
-test("distributed project loads only shared QR and retains its own OSC and audio control", async t => {
+test("distributed project runs both control pages without local or shared QR dependencies", async t => {
   const libraries = libraryMap();
   const project = await runningProject(t, libraries);
   assert.equal(fs.existsSync(path.join(project.dir, "node_modules")), false);
@@ -106,27 +105,9 @@ test("distributed project loads only shared QR and retains its own OSC and audio
     }
   }
   const qr = await fetch(`${project.monitor}/qr`);
-  assert.equal(qr.status, 200);
-  assert.equal(qr.headers.get("content-type"), "image/png");
+  assert.equal(qr.status, 404);
+
   const stopped = new Promise(resolve => project.child.once("exit", resolve));
   project.child.kill("SIGTERM");
   assert.equal(await stopped, 0);
-});
-
-
-
-test("Host version mismatch or missing entry fails without silently choosing local dependencies", async t => {
-  const libraries = libraryMap();
-  const id = libraries.express ? "express" : "qrcode";
-  const label = `${id}@${libraries[id].version}`;
-  const mismatch = { ...libraries, [id]: { ...libraries[id], version: "0.0.0" } };
-  const changed = await failedLaunch(copyRuntime(t), mismatch);
-  assert.notEqual(changed.code, 0);
-  assert.ok(changed.output.includes(label));
-  assert.match(changed.output, /mismatched version/);
-  const missing = { ...libraries, [id]: { ...libraries[id], path: path.join(os.tmpdir(), "absent-pnds-shared-entry.js") } };
-  const removed = await failedLaunch(copyRuntime(t), missing);
-  assert.notEqual(removed.code, 0);
-  assert.ok(removed.output.includes(label));
-  assert.match(removed.output, /entry file is missing/);
 });

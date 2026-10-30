@@ -225,7 +225,6 @@ test('the English table is the historical page copy, verbatim', () => {
   assert.equal(copy.en.mute, 'Mute')
   assert.equal(copy.en.rackAria, '16 test-tone toggles')
   assert.equal(copy.en.channelAriaPrefix + 3 + copy.en.channelAriaSuffix, 'Channel 3 tone')
-  assert.equal(copy.en.qrSub, 'Scan to open the monitor page')
 })
 
 test('prefix/suffix pairs assemble in every locale', () => {
@@ -263,7 +262,6 @@ test('the static HTML carries the English defaults', () => {
   assert.match(html, /<title>Multichannel Signal Generator — 16-ch sine wave test<\/title>/)
   assert.match(html, /16-ch sine wave test — all muted by default/)
   assert.match(html, />Master<\/label>/)
-  assert.match(html, /Scan to open the monitor page/)
   assert.match(html, /aria-label="16 test-tone toggles"/)
   assert.match(html, /<html lang="en">/)
 })
@@ -323,7 +321,11 @@ function loadPageScript(search, outputChannels = 2) {
   const element = (id) => (byId[id] = byId[id] || fakeElement(id))
   const documentElement = { lang: 'en' }
 
+  const serverState = { runId: 'test', revision: 0, outputChannels, masterValue: 0.9, tones: Array.from({ length: 16 }, (_, i) => ({ channel: i + 1, on: false, gain: 0 })) }
   const sandbox = {
+    AbortController,
+    setTimeout: () => 0,
+    clearTimeout: () => {},
     document: {
       documentElement,
       createElement: (tag) => fakeElement(tag),
@@ -332,7 +334,14 @@ function loadPageScript(search, outputChannels = 2) {
     location: { search },
     fetch: (url, options) => {
       requests.push({ url, options })
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ outputChannels }) })
+      if (options?.method === 'POST') {
+        const body = JSON.parse(options.body)
+        if (url === '/api/tone') serverState.tones[body.channel - 1].on = body.on
+        else serverState.masterValue = body.value
+        serverState.revision++
+      }
+      const state = JSON.parse(JSON.stringify(serverState))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(options?.method === 'POST' ? { ok: true, state } : state) })
     },
     addEventListener: (type, handler) => {
       if (type === 'message') {
@@ -341,6 +350,7 @@ function loadPageScript(search, outputChannels = 2) {
     },
   }
   sandbox.self = sandbox
+  sandbox.window = sandbox
 
   // The static markup's fader position (value="900" → −6 dBFS), present
   // before the script reads it.
@@ -349,6 +359,7 @@ function loadPageScript(search, outputChannels = 2) {
   const context = vm.createContext(sandbox)
   vm.runInContext(fs.readFileSync(path.join(LIB_DIR, 'locale-follow.js'), 'utf8'), context)
   vm.runInContext(fs.readFileSync(path.join(PUBLIC_DIR, 'copy.js'), 'utf8'), context)
+  vm.runInContext(fs.readFileSync(path.join(PUBLIC_DIR, 'control-client.js'), 'utf8'), context)
 
   const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8')
   const inline = html.match(/<script>([\s\S]*?)<\/script>/)
@@ -374,8 +385,6 @@ test('page script: renders the English defaults, then follows locale switches li
   assert.equal(page.byId.rack.attributes['aria-label'], '16 test-tone toggles')
   assert.equal(page.byId.rack.children.length, 16, 'the rack holds 16 tone buttons')
   assert.equal(page.byId.rack.children[2].attributes['aria-label'], 'Channel 3 tone')
-  assert.equal(page.byId['qr-img'].attributes['alt'], 'QR code for the monitor page')
-  assert.equal(page.byId['qr-sub'].textContent, 'Scan to open the monitor page')
 
   // The App switches its language → everything re-renders in Chinese.
   page.messageListeners[0]({ data: { type: 'pnds:locale', version: 1, locale: 'zh-CN' } })
@@ -385,7 +394,6 @@ test('page script: renders the English defaults, then follows locale switches li
   assert.equal(page.byId.master.attributes['aria-label'], '主音量')
   assert.equal(page.byId.rack.attributes['aria-label'], '16 个测试音开关')
   assert.equal(page.byId.rack.children[2].attributes['aria-label'], '第 3 声道测试音')
-  assert.equal(page.byId['qr-sub'].textContent, '扫码打开监视器页面')
   assert.equal(page.documentElement.lang, 'zh-CN')
 
   // The Mute word follows the locale too.
@@ -400,7 +408,6 @@ test('page script: renders the English defaults, then follows locale switches li
   // Malformed messages change nothing.
   page.messageListeners[0]({ data: null })
   page.messageListeners[0]({ data: { type: 'other', version: 1, locale: 'en' } })
-  assert.equal(page.byId['qr-sub'].textContent, '扫码打开监视器页面')
   assert.equal(page.byId.meta.textContent, '16 个测试音，宿主仅声明 2 个输出声道')
 })
 
@@ -410,7 +417,6 @@ test('page script: ?lang= seeds the first frame before any message', () => {
   assert.equal(page.document.title, 'Multichannel Signal Generator — 16 声道正弦波测试')
   assert.equal(page.byId.meta.textContent, '16 声道正弦波测试——默认全部静音')
   assert.equal(page.byId.rack.children[0].attributes['aria-label'], '第 1 声道测试音')
-  assert.equal(page.byId['qr-sub'].textContent, '扫码打开监视器页面')
   assert.equal(page.documentElement.lang, 'zh-CN')
 })
 
@@ -430,17 +436,20 @@ test('instrument: starts with all 16 tones off and never sends an audio command 
   assert.deepEqual(page.requests.map(({ url }) => url), ['/api/state'])
 })
 
-test('instrument: channel toggles update the count, visible state and existing tone API', () => {
+test('instrument: channel toggles update the count, visible state and existing tone API', async () => {
   const page = loadPageScript('', 16)
   const first = page.byId.rack.children[0]
   const last = page.byId.rack.children[15]
   first.listeners.click[0]()
+  await settle()
   last.listeners.click[0]()
+  await settle()
 
   assert.equal(page.byId['active-count'].textContent, '02')
   assert.equal(first.attributes['aria-pressed'], 'true')
   assert.equal(first.children[3].children[0].textContent, 'ON')
   first.listeners.click[0]()
+  await settle()
   assert.equal(page.byId['active-count'].textContent, '01')
   assert.equal(first.attributes['aria-pressed'], 'false')
   assert.equal(first.children[3].children[0].textContent, 'OFF')
@@ -452,10 +461,11 @@ test('instrument: channel toggles update the count, visible state and existing t
   ])
 })
 
-test('instrument: a language switch translates states and controls without changing enabled tones', () => {
+test('instrument: a language switch translates states and controls without changing enabled tones', async () => {
   const page = loadPageScript('', 16)
   const first = page.byId.rack.children[0]
   first.listeners.click[0]()
+  await settle()
   const requestsBefore = page.requests.length
 
   page.messageListeners[0]({ data: SPEC_MESSAGE })
@@ -467,15 +477,15 @@ test('instrument: a language switch translates states and controls without chang
   assert.equal(page.byId['tones-label'].textContent, '测试音')
   assert.equal(page.byId['master-note'].textContent, '控制所有已开启的测试音')
   assert.equal(page.byId['scale-mute'].textContent, '静音')
-  assert.equal(page.byId['remote-label'].textContent, '手机控制')
   assert.equal(page.requests.length, requestsBefore)
 })
 
-test('instrument: master endpoints preserve the gain API and expose readable values to assistive technology', () => {
+test('instrument: master endpoints preserve the gain API and expose readable values to assistive technology', async () => {
   const page = loadPageScript('', 16)
   for (const [position, label] of [['0', 'Mute'], ['1000', '0.0 dBFS'], ['500', '-30.0 dBFS']]) {
     page.byId.master.value = position
     page.byId.master.listeners.input[0]()
+    await settle()
     assert.equal(page.byId['master-value'].textContent, label)
     assert.equal(page.byId.master.attributes['aria-valuetext'], label)
   }
