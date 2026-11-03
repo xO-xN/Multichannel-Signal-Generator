@@ -314,9 +314,11 @@ function fakeElement(id) {
 // (self-wiring bridge), copy.js (tables) and the page's inline script,
 // all in one context, over a minimal DOM. /api/state answers with a
 // degraded 2-channel host so the re-render path is exercised too.
-function loadPageScript(search, outputChannels = 2) {
+function loadPageScript(search, outputChannels = 2, transport) {
   const messageListeners = []
   const requests = []
+  const timers = new Map()
+  let nextTimer = 0
   const byId = {}
   const element = (id) => (byId[id] = byId[id] || fakeElement(id))
   const documentElement = { lang: 'en' }
@@ -324,8 +326,12 @@ function loadPageScript(search, outputChannels = 2) {
   const serverState = { runId: 'test', revision: 0, outputChannels, masterValue: 0.9, tones: Array.from({ length: 16 }, (_, i) => ({ channel: i + 1, on: false, gain: 0 })) }
   const sandbox = {
     AbortController,
-    setTimeout: () => 0,
-    clearTimeout: () => {},
+    setTimeout(callback, delay) {
+      const id = ++nextTimer
+      timers.set(id, { callback, delay })
+      return id
+    },
+    clearTimeout: id => timers.delete(id),
     document: {
       documentElement,
       createElement: (tag) => fakeElement(tag),
@@ -334,6 +340,7 @@ function loadPageScript(search, outputChannels = 2) {
     location: { search },
     fetch: (url, options) => {
       requests.push({ url, options })
+      if (transport) return transport(url, options)
       if (options?.method === 'POST') {
         const body = JSON.parse(options.body)
         if (url === '/api/tone') serverState.tones[body.channel - 1].on = body.on
@@ -366,7 +373,12 @@ function loadPageScript(search, outputChannels = 2) {
   assert.ok(inline, 'the page has one inline script block')
   vm.runInContext(inline[1], context)
 
-  return { document: sandbox.document, byId, documentElement, messageListeners, requests }
+  return { document: sandbox.document, byId, documentElement, messageListeners, requests, poll() {
+    const timer = [...timers].find(([, timer]) => timer.delay === 250)
+    assert.ok(timer, 'the next state poll is scheduled')
+    timers.delete(timer[0])
+    timer[1].callback()
+  } }
 }
 
 // Lets the stubbed /api/state promise chain run out.
@@ -493,6 +505,63 @@ test('instrument: master endpoints preserve the gain API and expose readable val
   assert.deepEqual(commands.map(({ options }) => JSON.parse(options.body)), [
     { value: 0 }, { value: 1 }, { value: 0.5 },
   ])
+})
+
+test('instrument: a completed master write accepts a competing server value', async () => {
+  const replies = []
+  const page = loadPageScript('', 16, () => new Promise(resolve => {
+    replies.push(payload => resolve({ ok: true, json: async () => payload }))
+  }))
+  const state = (revision, masterValue) => ({ runId: 'run-a', revision, masterValue, outputChannels: 16, tones: [] })
+  replies.shift()(state(0, 0.9))
+  await settle()
+
+  page.byId.master.value = '200'
+  page.byId.master.listeners.input[0]()
+  await settle()
+  // The other console changed master while this write was awaiting its reply.
+  replies.shift()({ ok: true, state: state(2, 0.8) })
+  await settle()
+
+  assert.equal(page.byId.master.value, '800')
+  assert.equal(page.byId.master.attributes['aria-valuetext'], '-12.0 dBFS')
+
+  page.poll()
+  replies.shift()(state(3, 0.5))
+  await settle()
+  assert.equal(page.byId.master.value, '500', 'later remote state remains authoritative')
+})
+
+test('instrument: earlier master replies preserve newer input until its write completes', async () => {
+  const replies = []
+  const page = loadPageScript('', 16, () => new Promise(resolve => {
+    replies.push(payload => resolve({ ok: true, json: async () => payload }))
+  }))
+  const state = (revision, masterValue) => ({ runId: 'run-a', revision, masterValue, outputChannels: 16, tones: [] })
+  replies.shift()(state(0, 0.9))
+  await settle()
+
+  function input(value) {
+    page.byId.master.value = value
+    page.byId.master.listeners.input[0]()
+  }
+  input('200')
+  await settle()
+  input('700')
+  replies.shift()({ ok: true, state: state(1, 0.2) })
+  await settle()
+  assert.equal(page.byId.master.value, '700', 'an earlier acknowledgement cannot replace newer input')
+
+  input('400')
+  replies.shift()({ ok: true, state: state(3, 0.8) })
+  await settle()
+  assert.equal(page.byId.master.value, '400', 'a competing snapshot cannot replace a pending input')
+  replies.shift()({ ok: true, state: state(5, 0.6) })
+  await settle()
+  assert.equal(page.byId.master.value, '600', 'the final reply releases the pending input')
+  assert.equal(page.byId.master.attributes['aria-valuetext'], '-24.0 dBFS')
+  assert.deepEqual(page.requests.filter(({ url }) => url === '/api/master')
+    .map(({ options }) => JSON.parse(options.body).value), [0.2, 0.7, 0.4])
 })
 
 // ---------------------------------------------------------------------------

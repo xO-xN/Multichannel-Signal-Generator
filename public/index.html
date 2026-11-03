@@ -267,7 +267,15 @@
       paintState()
       void controls.setTone(channel, on).finally(() => { pendingTones.delete(channel); paintState() })
     }
-    function setMaster(value) { masterIntent = value; void controls.setMaster(value) }
+    function setMaster(value) {
+      const intent = {}
+      masterIntent = intent
+      void controls.setMaster(value).finally(() => {
+        if (masterIntent !== intent) return
+        masterIntent = null
+        paintState()
+      })
+    }
 
     function buildTone(channel) {
       const freq = toneFrequency(channel - 1)
@@ -378,8 +386,7 @@
         stateLabel.textContent = on ? currentCopy().on : currentCopy().off
       }
       master.disabled = !controlReady
-      if (state && (masterIntent === null || Math.abs(state.masterValue - masterIntent) < 0.000001)) {
-        masterIntent = null
+      if (state && masterIntent === null) {
         master.value = String(Math.round(state.masterValue * 1000))
       }
       masterValue.textContent = valueToDb(Number(master.value) / 1000)

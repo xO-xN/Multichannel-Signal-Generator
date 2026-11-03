@@ -10,6 +10,7 @@ const assert = require('node:assert/strict')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const fs = require('node:fs')
+const { create: createControls } = require('../public/control-client')
 
 const PROJECT_ROOT = path.join(__dirname, '..')
 
@@ -410,4 +411,64 @@ test('phone and monitor control one server state and preserve it on a fresh page
     assert.match(await (await fetch(`${server.base}/control-client.js`)).text(), /server-authoritative/)
     assert.equal((await fetch(`${server.base}/qr`)).status, 404)
   } finally { await server.stop() }
+})
+
+test('a delayed phone master acknowledgement converges to the monitor HTTP state', { timeout: 5000 }, async () => {
+  const server = await startServer()
+  const states = []
+  const timers = new Map()
+  let nextTimer = 0, releaseReply, acknowledgeWrite, ready, converge
+  const heldReply = new Promise(resolve => { releaseReply = resolve })
+  const writeReachedServer = new Promise(resolve => { acknowledgeWrite = resolve })
+  const initialized = new Promise(resolve => { ready = resolve })
+  const converged = new Promise(resolve => { converge = resolve })
+  const controls = createControls({
+    async fetch(url, options) {
+      const response = await fetch(`${server.base}${url}`, options)
+      if (url === '/api/master') {
+        acknowledgeWrite()
+        await heldReply
+      }
+      return response
+    },
+    schedule(callback, delay) {
+      const id = ++nextTimer
+      timers.set(id, { callback, delay })
+      return id
+    },
+    cancel: id => timers.delete(id),
+    onState(state) {
+      states.push(state)
+      ready()
+      if (state.masterValue === 0.8) converge()
+    },
+    onError: error => assert.fail(error),
+  })
+  try {
+    await waitForHealth(server.base, 'ready')
+    controls.start()
+    await initialized
+    const write = controls.setMaster(0.2)
+    await writeReachedServer
+    const remote = await fetchJson(`${server.monitorBase}/api/master`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ value: 0.8 }),
+    })
+    assert.equal(remote.status, 200)
+    releaseReply()
+    await write
+    const poll = [...timers].find(([, timer]) => timer.delay === 250)
+    assert.ok(poll, 'the next authoritative state read is scheduled')
+    timers.delete(poll[0])
+    poll[1].callback()
+    await converged
+
+    assert.equal(states.at(-1).masterValue, 0.8)
+    assert.deepEqual(states.at(-1), remote.body.state)
+    assert.deepEqual((await fetchJson(`${server.base}/api/state`)).body, remote.body.state)
+  } finally {
+    releaseReply()
+    controls.stop()
+    await server.stop()
+  }
 })
