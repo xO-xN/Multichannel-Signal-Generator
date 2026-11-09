@@ -12,10 +12,14 @@ A PNDS utility for checking multichannel routing: 16 sine-wave test tones toggle
    https://github.com/xO-xN/PNDS-App/releases/latest (macOS) — no Node.js or
    SuperCollider installation is required, the App bundles both.
 2. Put the Mac and the performers on the same local network.
-3. Open `http://<Host-LAN-IP>:6869/` on the operator's machine: 16 test-tone
-   toggles plus a master fader, all tones muted by default.
-4. Display the App performer QR and scan it on a phone. Performer (`:6868`)
-   and monitor (`:6869`) share the console and synchronized server state.
+3. The App opens the local monitor automatically: 16 test-tone toggles,
+   per-channel volume and a master fader, all tones muted by default. If you
+   open it manually, use the actual monitor URL in the App's runtime details;
+   internal ports may be assigned dynamically.
+4. Open the bottom network popover and copy its complete public LAN HTTP URL
+   or display its QR. On the phone, open that address and explicitly enter the
+   displayed performance. Phone and monitor share the console, authoritative
+   server state and the same audio engine.
 
 The monitor follows the App language and theme.
 
@@ -24,4 +28,16 @@ Runtime requirements: PNDS App v1.6.2 or a Host supporting the exact shared libr
 
 ## App performer QR migration
 
-This version removes the project QR interface and `/qr` endpoint. In PNDS App with built-in performer QR, use the bottom bar in performance mode or the Performers button in creation mode to open this project’s performer page. Standalone browsers and older Apps retain the project pages without an in-page QR entry.
+The project has no in-page QR interface or `/qr` endpoint. In performance mode,
+share the public HTTP entry from the App's bottom network popover, then explicitly
+enter the displayed performance. Creation device tests keep their separate
+Performers button. Direct fixed-port addresses are only a standalone or legacy
+fallback, not the stable saved Host entry.
+
+## Unified Host entry (1.4.0)
+
+In an adapted PNDS Host, copy or scan the complete public URL in the bottom network control, then explicitly enter the displayed performance. The phone console and local monitor control the same audio engine: channel toggles, individual channel-volume trims and master fader use server-authoritative state. Channel trims default to unity and combine with the master; tones remain muted until switched on. Reopening the page only reads state and never restarts audio.
+
+All scripts and HTTP controls retain the confirmed performance prefix. Stop or a new performance revokes old network access; explicitly enter again. The page prepares only after a valid authoritative state arrives. The Host may assign internal ports dynamically; direct project addresses remain a standalone/legacy fallback and are not the saved stable entry. No WAN, remote library, Worker, WebSocket, sensor or media permission is required by this tool. Saving an icon grants no extra HTTP capabilities. Native Client storage/origin behavior and existing direct/HTTPS access remain unchanged.
+
+Local tests use a fake scsynth; real phone/speaker output needs separate device acceptance.

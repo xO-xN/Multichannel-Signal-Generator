@@ -2,13 +2,16 @@
   "schemaVersion": 2,
   "id": "multichannel-signal-generator",
   "name": "Multichannel Signal Generator",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "PNDS utility project: 16-ch sine wave test for checking Internal multichannel routing.",
   "scoreServer": {
     "entry": "server.js",
     "workingDirectory": ".",
     "performerPort": 6868,
-    "monitorPort": 6869
+    "monitorPort": 6869,
+    "supportsPerformerUrl": true,
+    "browserParticipation": 1,
+    "runtimePorts": 1
   },
   "audio": {
     "defaultMode": "internal",

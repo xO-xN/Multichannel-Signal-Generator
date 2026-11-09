@@ -245,7 +245,7 @@ test('the monitor page loads theme-follow, then locale-follow, then copy', () =>
 
   const themeAt = html.indexOf('/__pnds/theme-follow.js')
   const localeAt = html.indexOf('/__pnds/locale-follow.js')
-  const copyAt = html.indexOf('src="/copy.js"')
+  const copyAt = html.indexOf('src="./copy.js"')
   assert.ok(themeAt >= 0, 'theme-follow.js is referenced')
   assert.ok(localeAt > themeAt, 'locale-follow.js loads after theme-follow.js')
   assert.ok(copyAt > localeAt, 'copy.js loads after locale-follow.js')
@@ -344,6 +344,7 @@ function loadPageScript(search, outputChannels = 2, transport) {
       if (options?.method === 'POST') {
         const body = JSON.parse(options.body)
         if (url === '/api/tone') serverState.tones[body.channel - 1].on = body.on
+        else if (url === '/api/channel') serverState.tones[body.channel - 1].volume = body.value
         else serverState.masterValue = body.value
         serverState.revision++
       }
@@ -577,3 +578,23 @@ function keysOf(value) {
   }
   return out
 }
+
+test('instrument: channel volume has a labelled native range and follows server authority', async () => {
+  const page = loadPageScript('', 16)
+  await settle()
+  const strip = page.byId['channel-volumes'].children[4]
+  assert.ok(strip, 'channel five volume is available')
+  const [label, range, output] = strip.children
+  assert.equal(label.textContent, 'Channel 5 volume')
+  assert.equal(range.type, 'range')
+  assert.equal(range.attributes['aria-valuetext'], '0.0 dBFS')
+  range.value = '500'
+  range.listeners.input[0]()
+  await settle()
+  const request = page.requests.find(({url}) => url === '/api/channel')
+  assert.deepEqual(JSON.parse(request.options.body), {channel: 5, value: 0.5})
+  assert.equal(output.textContent, '-30.0 dBFS')
+  page.messageListeners[0]({data: {type:'pnds:locale',version:1,locale:'zh-CN'}})
+  assert.equal(label.textContent, '第 5 声道音量')
+  assert.equal(range.attributes['aria-label'], '第 5 声道音量')
+})

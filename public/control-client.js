@@ -1,17 +1,20 @@
 // One server-authoritative control model for the phone and desktop pages.
 ;(function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory()
-  else root.PNDS_CONTROL = factory()
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(root)
+  else root.PNDS_CONTROL = factory(root)
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict'
   function create(options) {
     const fetcher = options.fetch || fetch
+    const participation = options.participation || root.PNDS_PARTICIPATION
+    const resource = relative => participation ? participation.resource(relative) : '/' + relative
     const schedule = options.schedule || setTimeout
     const cancel = options.cancel || clearTimeout
     let active = false, epoch = 0, timer = null
     let queue = Promise.resolve(), mutation = 0
     let run = null, revision = -1
     let masterPending = null, masterTask = null
+    const channelTasks = new Map()
     const retiredRuns = new Set(), writes = new Set(), requests = new Set()
 
     function apply(state, owner) {
@@ -44,7 +47,7 @@
     async function refresh(owner) {
       const checkpoint = mutation
       try {
-        const state = await request('/api/state', undefined, owner)
+        const state = await request(resource('api/state'), undefined, owner)
         if (checkpoint === mutation && writes.size === 0 && state) apply(state, owner)
       } catch (error) { if (active && epoch === owner) options.onError(error) }
     }
@@ -80,13 +83,27 @@
       cancel(timer)
       requests.forEach(controller => controller.abort())
       requests.clear(); writes.clear()
-      masterPending = null; masterTask = null; queue = Promise.resolve()
+      masterPending = null; masterTask = null; channelTasks.clear(); queue = Promise.resolve()
     }
     return {
       start, stop,
       setTone(channel, on) {
         if (!active) return Promise.resolve(false)
-        return enqueue(owner => post('/api/tone', { channel, on }, owner))
+        return enqueue(owner => post(resource('api/tone'), { channel, on }, owner))
+      },
+      setChannel(channel, value) {
+        if (!active) return Promise.resolve(false)
+        let entry = channelTasks.get(channel)
+        if (entry) { entry.value = value; return entry.task }
+        entry = { value, task: null }
+        channelTasks.set(channel, entry)
+        entry.task = enqueue(async owner => {
+          while (active && owner === epoch && entry.value !== null) {
+            const next = entry.value; entry.value = null
+            await post(resource('api/channel'), { channel, value: next }, owner)
+          }
+        }).finally(() => { if (channelTasks.get(channel) === entry) channelTasks.delete(channel) })
+        return entry.task
       },
       setMaster(value) {
         if (!active) return Promise.resolve(false)
@@ -95,7 +112,7 @@
         const task = enqueue(async owner => {
           while (active && owner === epoch && masterPending !== null) {
             const next = masterPending; masterPending = null
-            await post('/api/master', { value: next }, owner)
+            await post(resource('api/master'), { value: next }, owner)
           }
         }).finally(() => { if (masterTask === task) masterTask = null })
         masterTask = task

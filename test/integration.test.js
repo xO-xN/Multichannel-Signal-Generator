@@ -168,7 +168,7 @@ async function waitForHealth(base, expectedStatus, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     try {
-      const { status, body } = await fetchJson(`${base}/__pnds/health`)
+      const { status, body } = await fetchJson(`${base}/__pnds/health`, { signal: AbortSignal.timeout(500) })
       if (status === 200 && body?.status === expectedStatus) return body
     } catch {
       // not up yet
@@ -256,7 +256,7 @@ test('both control pages serve the locale-follow module and copy table', async (
     const monitorPage = await fetch(`${server.monitorBase}/`)
     const monitorHtml = await monitorPage.text()
     assert.match(monitorHtml, /\/__pnds\/locale-follow\.js/)
-    assert.match(monitorHtml, /src="\/copy\.js"/)
+    assert.match(monitorHtml, /src="\.\/copy\.js"/)
 
     const localeModule = await fetch(`${server.monitorBase}/__pnds/locale-follow.js`)
     assert.equal(localeModule.status, 200)
@@ -471,4 +471,131 @@ test('a delayed phone master acknowledgement converges to the monitor HTTP state
     controls.stop()
     await server.stop()
   }
+})
+
+test('direct pages retain standalone context and relative queried resources', async () => {
+  const server = await startServer()
+  try {
+    await waitForHealth(server.base, 'ready')
+    for (const base of [server.base, server.monitorBase]) {
+      const context = await fetch(`${base}/__pnds/context.js`)
+      assert.equal(context.status, 200)
+      assert.match(context.headers.get('content-type'), /javascript/)
+      assert.match(await context.text(), /no Host confirmation/)
+      const page = await fetch(base).then(response => response.text())
+      const scripts = [...page.matchAll(/<script[^>]*src="([^"]+)"/g)].map(match => match[1])
+      assert.equal(scripts[0], './__pnds/context.js')
+      assert.ok(scripts.every(script => script.startsWith('./')), scripts.join(', '))
+      for (const script of scripts) {
+        assert.equal((await fetch(new URL(`${script}?test=queried`, `${base}/`))).status, 200)
+      }
+    }
+  } finally { await server.stop() }
+})
+
+test('confirmed control traffic stays under its immutable prefix and shares the monitor engine', async () => {
+  const server = await startServer()
+  const requests = []
+  const prefix = '/__pnds/run/exact-confirmation/'
+  const proxy = require('node:http').createServer(async (request, response) => {
+    requests.push(request.url)
+    if (!request.url.startsWith(prefix)) { response.writeHead(403).end(); return }
+    const upstream = require('node:http').request(new URL(request.url.slice(prefix.length), `${server.base}/`), {
+      method: request.method, headers: request.headers,
+    }, result => { response.writeHead(result.statusCode, result.headers); result.pipe(response) })
+    request.pipe(upstream)
+    upstream.on('error', () => response.writeHead(502).end())
+  })
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve))
+  const confirmedBase = `http://127.0.0.1:${proxy.address().port}${prefix}`
+  let resolveState
+  const received = new Promise(resolve => { resolveState = resolve })
+  const errors = []
+  const controls = createControls({
+    participation: { resource: relative => new URL(relative, confirmedBase).href },
+    fetch: (...args) => fetch(...args),
+    onState: resolveState, onError: error => errors.push(error),
+  })
+  try {
+    await waitForHealth(server.base, 'ready')
+    controls.start()
+    await Promise.race([received, new Promise((_, reject) => setTimeout(() => reject(new Error('confirmed state never arrived')), 1000))])
+    assert.equal(await controls.setTone(16, true), true)
+    assert.equal(await controls.setMaster(0.4), true)
+    assert.equal(await controls.setChannel(16, 0.3), true)
+    const state = (await fetchJson(`${server.monitorBase}/api/state`)).body
+    assert.equal(state.tones[15].on, true)
+    assert.equal(state.masterValue, 0.4)
+    assert.equal(state.tones[15].volume, 0.3)
+    assert.deepEqual(errors, [])
+    assert.deepEqual(requests.slice(0, 4), [`${prefix}api/state`, `${prefix}api/tone`, `${prefix}api/master`, `${prefix}api/channel`])
+  } finally {
+    controls.stop()
+    proxy.closeAllConnections()
+    await new Promise(resolve => proxy.close(resolve))
+    await server.stop()
+  }
+})
+
+test('App-owned listeners report their actual ports and preserve the shared control engine', async () => {
+  const fake = await startFakeScsynth()
+  const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'msg-runtime-'))
+  const listeners = await Promise.all(['performer', 'monitor'].map(async role => {
+    const listener = net.createServer()
+    await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve))
+    return { listener, role, port: listener.address().port }
+  }))
+  const assignment = {
+    version: 1, runId: 'msg-listener-owner', reportPath: path.join(directory, 'bound.json'),
+    services: listeners.map(({ role, port }, index) => ({ role, port, fd: index + 3 })),
+  }
+  const proc = spawn(process.execPath, [path.join(PROJECT_ROOT, 'server.js')], {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, PNDS_OSC_TARGET: `127.0.0.1:${fake.port}`, PNDS_RUNTIME_PORTS: JSON.stringify(assignment), PNDS_PERFORMER_PORT: '1', PNDS_MONITOR_PORT: '2' },
+    stdio: ['ignore', 'pipe', 'pipe', ...listeners.map(({listener}) => listener._handle.fd)],
+  })
+  await Promise.all(listeners.map(({ listener }) => new Promise(resolve => listener.close(resolve))))
+  try {
+    const base = `http://127.0.0.1:${listeners[0].port}`
+    const monitor = `http://127.0.0.1:${listeners[1].port}`
+    const health = await waitForHealth(base, 'ready', 1500)
+    assert.equal(health.scoreServer.runtimeRunId, assignment.runId)
+    assert.equal(health.scoreServer.performerPort, listeners[0].port)
+    assert.equal(health.scoreServer.monitorPort, listeners[1].port)
+    assert.deepEqual(JSON.parse(fs.readFileSync(assignment.reportPath, 'utf8')), {
+      version: 1, runId: assignment.runId, status: 'bound',
+      services: listeners.map(({role,port}) => ({role,port})),
+    })
+    const tone = await fetchJson(`${base}/api/tone`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({channel: 3, on: true}) })
+    assert.deepEqual((await fetchJson(`${monitor}/api/state`)).body, tone.body.state)
+  } finally {
+    proc.kill('SIGTERM')
+    if (await waitExit(proc) === 'timeout') proc.kill('SIGKILL')
+    await fake.close()
+    for (const file of [assignment.reportPath, `${assignment.reportPath}.tmp`]) fs.rmSync(file, { force: true })
+    fs.rmdirSync(directory)
+  }
+})
+
+test('per-channel volume is authoritative across both pages and composes with master without restarting tones', async () => {
+  const server = await startServer()
+  const post = (base, endpoint, body) => fetchJson(`${base}/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  try {
+    await waitForHealth(server.base, 'ready')
+    const initial = (await fetchJson(`${server.base}/api/state`)).body
+    assert.equal((await post(server.base, 'channel', {channel: 5, value: 2})).status, 400)
+    const channel = await post(server.base, 'channel', {channel: 5, value: 0.5})
+    assert.equal(channel.status, 200)
+    assert.equal(channel.body.state.tones[4].volume, 0.5)
+    await post(server.monitorBase, 'tone', {channel: 5, on: true})
+    const master = await post(server.monitorBase, 'master', {value: 0.8})
+    const state = (await fetchJson(`${server.base}/api/state`)).body
+    assert.deepEqual(state, master.body.state)
+    assert.equal(state.runId, initial.runId)
+    assert.equal(state.tones[4].volume, 0.5)
+    assert.ok(Math.abs(state.tones[4].gain - 0.251188643150958 * 0.03162277660168379) < 1e-12)
+    assert.equal(state.tones[3].gain, 0)
+    assert.equal((await post(server.base, 'tone', {channel: 5, on: false})).body.state.tones[4].gain, 0)
+    assert.equal((await post(server.monitorBase, 'tone', {channel: 5, on: true})).body.state.tones[4].volume, 0.5)
+  } finally { await server.stop() }
 })

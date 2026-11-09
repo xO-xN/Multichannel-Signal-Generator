@@ -76,3 +76,18 @@ test('invalid state reports failure and a later poll can recover', async () => {
   assert.equal(h.states.length, 1)
   h.client.stop()
 })
+
+test('channel volume coalesces rapid input and retains newer authority after a late response', async () => {
+  const h = harness(); h.client.start(); h.requests[0].reply(state(0)); await flush()
+  const first = h.client.setChannel(5, 0.2); await flush()
+  const final = h.client.setChannel(5, 0.5); h.client.setChannel(5, 0.7)
+  assert.equal(h.requests.length, 2)
+  h.requests[1].reply({ok: true, state: state(2)}); await flush()
+  assert.equal(h.requests[2].url, '/api/channel')
+  assert.deepEqual(JSON.parse(h.requests[2].options.body), {channel: 5, value: 0.7})
+  h.requests[2].reply({ok: true, state: state(3)})
+  assert.equal(await first, true); assert.equal(await final, true)
+  h.poll(); h.requests[3].reply(state(1)); await flush()
+  assert.equal(h.states.at(-1).revision, 3)
+  h.client.stop()
+})

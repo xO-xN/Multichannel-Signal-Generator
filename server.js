@@ -46,11 +46,24 @@ const outputChannels = resolveEnvInteger('PNDS_AUDIO_OUTPUT_CHANNELS', 16)
 const oscTarget = process.env.PNDS_OSC_TARGET || '127.0.0.1:57110'
 const { host: oscHost, port: oscPort } = parseOscTarget(oscTarget)
 
+const runtimeAssignment = process.env.PNDS_RUNTIME_PORTS ? JSON.parse(process.env.PNDS_RUNTIME_PORTS) : null
+if (process.env.PNDS_RUNTIME_PORTS && (!runtimeAssignment ||
+  runtimeAssignment.version !== 1 || typeof runtimeAssignment.runId !== 'string' || !runtimeAssignment.runId ||
+  typeof runtimeAssignment.reportPath !== 'string' || !path.isAbsolute(runtimeAssignment.reportPath) ||
+  !Array.isArray(runtimeAssignment.services) || runtimeAssignment.services.length !== 2 ||
+  !['performer', 'monitor'].every(role => runtimeAssignment.services.filter(service =>
+    service.role === role && Number.isInteger(service.fd) && service.fd >= 0 &&
+    Number.isInteger(service.port) && service.port >= 1 && service.port <= 65535).length === 1) ||
+  runtimeAssignment.services[0].port === runtimeAssignment.services[1].port ||
+  runtimeAssignment.services[0].fd === runtimeAssignment.services[1].fd
+)) throw new Error('Unsupported PNDS runtime listener assignment')
+const assignedService = role => runtimeAssignment?.services.find(service => service.role === role)
+
 const serverConfig = {
   // Env overrides keep the integration tests independent of the manifest
   // ports (which may be in use by a running PNDS session).
-  performerPort: resolveEnvInteger('PNDS_PERFORMER_PORT', manifest.scoreServer.performerPort),
-  monitorPort: resolveEnvInteger('PNDS_MONITOR_PORT', manifest.scoreServer.monitorPort),
+  performerPort: assignedService('performer')?.port ?? resolveEnvInteger('PNDS_PERFORMER_PORT', manifest.scoreServer.performerPort),
+  monitorPort: assignedService('monitor')?.port ?? resolveEnvInteger('PNDS_MONITOR_PORT', manifest.scoreServer.monitorPort),
 }
 
 // LAN address used for the startup log lines.
@@ -106,6 +119,7 @@ function getHealthPayload() {
     scoreServer: {
       performerPort: serverConfig.performerPort,
       monitorPort: serverConfig.monitorPort,
+      ...(runtimeAssignment ? { runtimeRunId: runtimeAssignment.runId } : {}),
     },
   }
   if (audioStartupError) payload.audio.error = audioStartupError.message
@@ -165,6 +179,11 @@ function jsonResponse(response, status, payload) {
 
 function handleControlPage(request, response) {
   const url = new URL(request.url, 'http://localhost')
+  if (url.pathname === '/__pnds/context.js') {
+    response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' })
+    response.end('/* Direct project access: no Host confirmation. */\n')
+    return
+  }
   if (url.pathname === '/__pnds/health') {
     jsonResponse(response, 200, getHealthPayload())
     return
@@ -175,6 +194,10 @@ function handleControlPage(request, response) {
   }
   if (url.pathname === '/api/tone' && request.method === 'POST') {
     handleToneRequest(request, response)
+    return
+  }
+  if (url.pathname === '/api/channel' && request.method === 'POST') {
+    handleChannelRequest(request, response)
     return
   }
   if (url.pathname === '/api/master' && request.method === 'POST') {
@@ -208,6 +231,15 @@ const monitorServer = http.createServer(handleControlPage)
 let engineRef = null
 const controlRun = require('node:crypto').randomUUID()
 let controlRevision = 0
+let controlQueue = Promise.resolve()
+function mutateControl(action) {
+  const task = controlQueue.then(async () => {
+    if (isShuttingDown) throw new Error('Performance is stopping')
+    if (engineRef) { controlRevision++; await action(engineRef) }
+  })
+  controlQueue = task.catch(() => undefined)
+  return task
+}
 
 function audioEngineState() {
   return {
@@ -256,14 +288,26 @@ function handleToneRequest(request, response) {
       jsonResponse(response, 400, { error: errors.join('; ') })
       return
     }
-    if (engineRef) {
-      controlRevision++
-      await engineRef.setTone(channel, on)
-    }
+    await mutateControl(engine => engine.setTone(channel, on))
     jsonResponse(response, 200, { ok: true, state: audioEngineState() })
   })().catch(error => {
     jsonResponse(response, 400, { error: error.message })
   })
+}
+
+/** POST /api/channel { channel, value } — channel trim in the same 0..1 dB scale. */
+function handleChannelRequest(request, response) {
+  void (async () => {
+    const body = await readJsonBody(request)
+    const channel = Number(body.channel)
+    const value = Number(body.value)
+    if (!Number.isInteger(channel) || channel < 1 || channel > 16 || !Number.isFinite(value) || value < 0 || value > 1) {
+      jsonResponse(response, 400, { error: 'channel must be an integer 1..16 and value must be 0..1' })
+      return
+    }
+    await mutateControl(engine => engine.setChannelGain(channel, value))
+    jsonResponse(response, 200, { ok: true, state: audioEngineState() })
+  })().catch(error => jsonResponse(response, 400, { error: error.message }))
 }
 
 /** POST /api/master { value } — master volume fader 0..1 (dBFS [-60,-6]). */
@@ -275,10 +319,7 @@ function handleMasterRequest(request, response) {
       jsonResponse(response, 400, { error: `value must be 0..1 (got ${body.value})` })
       return
     }
-    if (engineRef) {
-      controlRevision++
-      await engineRef.setMasterGain(value)
-    }
+    await mutateControl(engine => engine.setMasterGain(value))
     jsonResponse(response, 200, { ok: true, state: audioEngineState() })
   })().catch(error => {
     jsonResponse(response, 400, { error: error.message })
@@ -336,6 +377,7 @@ function shutdown(signal) {
   console.log(`[shutdown] received ${signal}.`)
   shutdownPromise = (async () => {
     await audioStartup
+    await controlQueue
     if (engineRef) await engineRef.stop().catch(error => {
       console.error('[shutdown] failed to stop audio:', error)
       process.exitCode = 1
@@ -359,17 +401,43 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'))
 // Listen
 // ---------------------------------------------------------------------------
 
-performerServer.listen(serverConfig.performerPort, '0.0.0.0', () => {
+function listenerOptions(role) {
+  const assigned = assignedService(role)
+  return assigned ? { fd: assigned.fd } : { port: serverConfig[`${role}Port`], host: '0.0.0.0' }
+}
+
+function reportRuntime(error) {
+  if (!runtimeAssignment || (!error && (!performerListening || !monitorListening))) return
+  const report = { version: 1, runId: runtimeAssignment.runId,
+    status: error ? 'error' : 'bound',
+    services: error ? [] : runtimeAssignment.services.map(({ role, port }) => ({ role, port })),
+    ...(error ? { error: error.message } : {}),
+  }
+  try {
+    fs.writeFileSync(`${runtimeAssignment.reportPath}.tmp`, JSON.stringify(report), { mode: 0o600 })
+    fs.renameSync(`${runtimeAssignment.reportPath}.tmp`, runtimeAssignment.reportPath)
+  } catch (reportError) {
+    serverStartupError = reportError
+    console.error('[server] runtime listener report failed:', reportError.message)
+    process.exitCode = 1
+    void shutdown('runtime report failed')
+  }
+}
+
+performerServer.listen(listenerOptions('performer'), () => {
   performerListening = true
+  reportRuntime()
   console.log(`[server] performer page: http://${hostLanIp}:${serverConfig.performerPort}/`)
 })
-monitorServer.listen(serverConfig.monitorPort, '0.0.0.0', () => {
+monitorServer.listen(listenerOptions('monitor'), () => {
   monitorListening = true
+  reportRuntime()
   console.log(`[server] monitor page: http://${hostLanIp}:${serverConfig.monitorPort}/`)
 })
 
 performerServer.on('error', error => {
   serverStartupError = error
+  reportRuntime(error)
   console.error(`[server] performer port ${serverConfig.performerPort} failed:`, error.message)
   // A port in use must not leave a half-alive server that pretends to run.
   if (error.code === 'EADDRINUSE') {
@@ -379,6 +447,7 @@ performerServer.on('error', error => {
 })
 monitorServer.on('error', error => {
   serverStartupError = error
+  reportRuntime(error)
   console.error(`[server] monitor port ${serverConfig.monitorPort} failed:`, error.message)
   if (error.code === 'EADDRINUSE') {
     process.exitCode = 1
